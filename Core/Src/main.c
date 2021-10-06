@@ -37,6 +37,10 @@
 /* USER CODE BEGIN PD */
 #define LOOP_CYCLE_MS 20
 #define MAX_BRIGHTNESS 5
+
+#define MODE_TIME_HM 0
+#define MODE_TIME_MS 1
+#define MODE_SET_HM 2
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,6 +55,8 @@ char ch1, ch2, ch3, ch4;
 int colon;
 int brightness;
 int key1, key2, key3, key4;
+
+int mode;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -62,9 +68,12 @@ static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint3
 static void LED_Display_Flush();
 static void LED_Set_Int(int x);
 static void LED_AllOn(uint32_t delay);
+static void LED_Set_CurrentTime_HM();
+static void LED_Set_CurrentTime_MS();
 
-static void Tick_SimpleCounter();
+static void Tick_Simple_Counter();
 static void Tick_Read_Keys();
+static void Tick_Set_HM();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -103,13 +112,13 @@ int main(void)
   MX_ADC1_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  LED_AllOn(5000);
-  brightness = 5;
+  LED_AllOn(3000);
+  brightness = MAX_BRIGHTNESS;
+  mode = MODE_TIME_HM;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  int count = 0;
   while (1)
   {
     /* USER CODE END WHILE */
@@ -117,19 +126,34 @@ int main(void)
     /* USER CODE BEGIN 3 */
     // Tick_Simple_Counter();
     Tick_Read_Keys();
-    if (key1)
-      count += 1;
-    if (key2)
-      count += 2;
-    if (key3)
-      count += 3;
-    if (key4) {
-      brightness++;
-      if (brightness > MAX_BRIGHTNESS) {
-        brightness = 1;
+    switch (mode)
+    {
+    case MODE_TIME_HM:
+      LED_Set_CurrentTime_HM();
+      if (key4)
+      {
+        mode = MODE_TIME_MS;
       }
+      if (key1)
+      {
+        mode = MODE_SET_HM;
+      }
+      break;
+    case MODE_TIME_MS:
+      LED_Set_CurrentTime_MS();
+      if (key4)
+      {
+        mode = MODE_TIME_HM;
+      }
+      break;
+    case MODE_SET_HM:
+      Tick_Set_HM();
+      break;
+    default:
+      LED_Set_Int(0);
+      mode = MODE_TIME_HM;
+      break;
     }
-    LED_Set_Int(count);
     LED_Display_Flush();
   }
   /* USER CODE END 3 */
@@ -221,11 +245,6 @@ static void LED_Display_Pos(uint16_t pos_pin, uint16_t ch_pin, uint32_t delay)
 
 static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay)
 {
-  const uint16_t FULL_POS = LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin;
-  const uint16_t FULL_CHAR = LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_E_Pin | LED_F_Pin | LED_G_Pin | LED_DP_Pin;
-  // HAL_GPIO_WritePin(GPIOB, FULL_POS, GPIO_PIN_SET);
-  // HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_RESET);
-
   LED_Display_Pos(LED_1_Pin, LED_Control_Input(ch1), delay);
   LED_Display_Pos(LED_2_Pin, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
   LED_Display_Pos(LED_3_Pin, LED_Control_Input(ch3), delay);
@@ -285,23 +304,23 @@ static void LED_Set_Int(int x)
   colon = 0;
 }
 
-#define PROCESS_KEY(i)                         \
+#define PROCESS_KEY(i)                        \
   if (HAL_GPIO_ReadPin(GPIOA, BTN_##i##_Pin)) \
-  {                                            \
-    k##i##_hits = 0;                           \
-    key##i = 0;                                \
-  }                                            \
-  else                                         \
-  {                                            \
-    k##i##_hits++;                             \
-    if (k##i##_hits == 2)                      \
-    {                                          \
-      key##i = 1;                              \
-    }                                          \
-    else                                       \
-    {                                          \
-      key##i = 0;                              \
-    }                                          \
+  {                                           \
+    k##i##_hits = 0;                          \
+    key##i = 0;                               \
+  }                                           \
+  else                                        \
+  {                                           \
+    k##i##_hits++;                            \
+    if (k##i##_hits == 2)                     \
+    {                                         \
+      key##i = 1;                             \
+    }                                         \
+    else                                      \
+    {                                         \
+      key##i = 0;                             \
+    }                                         \
   }
 static void Tick_Read_Keys()
 {
@@ -310,6 +329,157 @@ static void Tick_Read_Keys()
   PROCESS_KEY(2);
   PROCESS_KEY(3);
   PROCESS_KEY(4);
+}
+
+static void LED_Set_CurrentTime_HM()
+{
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+
+  ch1 = sTime1.Hours / 16 + '0';
+  ch2 = sTime1.Hours % 16 + '0';
+  ch3 = sTime1.Minutes / 16 + '0';
+  ch4 = sTime1.Minutes % 16 + '0';
+
+  colon = sTime1.Seconds & 1;
+}
+
+static void LED_Set_CurrentTime_MS()
+{
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+
+  ch1 = sTime1.Minutes / 16 + '0';
+  ch2 = sTime1.Minutes % 16 + '0';
+  ch3 = sTime1.Seconds / 16 + '0';
+  ch4 = sTime1.Seconds % 16 + '0';
+
+  colon = sTime1.Seconds & 1;
+}
+
+static void Tick_Set_HM()
+{
+  static int timeout = 0;
+  static int currentPos = 0;
+  static int x1, x2, x3, x4;
+  if (!key1 && !key2 && !key3 && !key4)
+  {
+    timeout++;
+    if (timeout > 1000)
+    {
+      currentPos = 0;
+      timeout = 0;
+      mode = MODE_TIME_HM;
+      return;
+    }
+  }
+  else
+  {
+    timeout = 0;
+  }
+
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+
+  if (currentPos == 0)
+  {
+    x1 = sTime1.Hours / 16;
+    x2 = sTime1.Hours % 16;
+    x3 = sTime1.Minutes / 16;
+    x4 = sTime1.Minutes % 16;
+    currentPos++;
+  }
+
+  if (key1)
+  {
+    currentPos++;
+  }
+
+  if (currentPos > 4)
+  {
+    sTime1.Hours = x1 * 16 + x2;
+    sTime1.Minutes = x3 * 16 + x4;
+    sTime1.Seconds = 0x00;
+    HAL_RTC_SetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+    currentPos = 0;
+    timeout = 0;
+    mode = MODE_TIME_HM;
+    return;
+  }
+
+  if (currentPos == 2 && x1 == 2 && x2 > 3) {
+    x2 = 3;
+  }
+
+  if (key2)
+  {
+    switch (currentPos)
+    {
+      case 1:
+        if (x1 < 2) x1++;
+        else if (x2 > 3) x2 = 3;
+        break;
+      case 2:
+        if (x1 == 2) {
+          if (x2 < 3) x2++;
+        } else {
+          if (x2 < 9) x2++;
+        }
+        break;
+      case 3:
+        if (x3 < 5) x3++;
+        break;
+      case 4:
+        if (x4 < 9) x4++;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (key3) {
+    switch (currentPos) {
+      case 1:
+        if (x1 > 0) x1--;
+        break;
+      case 2:
+        if (x2 > 0) x2--;
+        break;
+      case 3:
+        if (x3 > 0) x3--;
+        break;
+      case 4:
+        if (x4 > 0) x4--;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (sTime1.Seconds & 1) {
+    ch1 = ch2 = ch3 = ch4 = 0;
+    colon = 1;
+    switch (currentPos) {
+      case 1:
+        ch1 = x1 + '0';
+        break;
+      case 2:
+        ch2 = x2 + '0';
+        break;
+      case 3:
+        ch3 = x3 + '0';
+        break;
+      case 4:
+        ch4 = x4 + '0';
+        break;
+    }
+  } else {
+    ch1 = x1 + '0';
+    ch2 = x2 + '0';
+    ch3 = x3 + '0';
+    ch4 = x4 + '0';
+    colon = 0;
+  }
 }
 /* USER CODE END 4 */
 
@@ -345,4 +515,4 @@ void assert_failed(uint8_t *file, uint32_t line)
 }
 #endif /* USE_FULL_ASSERT */
 
-/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
+  /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
