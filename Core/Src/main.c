@@ -54,7 +54,11 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
-
+static uint16_t LED_Control_Input(char ch);
+static void LED_Display_Pos(uint16_t pos, uint16_t ch, uint32_t delay);
+static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay);
+static void LED_AllOn(uint32_t delay);
+static void Test_LED_Counter();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -93,7 +97,7 @@ int main(void)
   MX_ADC1_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-
+  LED_AllOn(5000);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -103,6 +107,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    Test_LED_Counter();
+    HAL_GPIO_TogglePin(GPIOC, LED_ONBOARD_Pin);
   }
   /* USER CODE END 3 */
 }
@@ -269,7 +275,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LED_ONBOARD_GPIO_Port, LED_ONBOARD_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LED_IN_1_Pin | LED_IN_2_Pin | LED_IN_3_Pin | LED_IN_4_Pin | LED_OUT_12_Pin | LED_OUT_9_Pin | LED_OUT_8_Pin | LED_OUT_6_Pin | LED_IN_11_Pin | LED_IN_10_Pin | LED_IN_7_Pin | LED_IN_5_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LED_C_Pin | LED_DP_Pin | LED_D_Pin | LED_E_Pin | LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin | LED_A_Pin | LED_F_Pin | LED_B_Pin | LED_G_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : LED_ONBOARD_Pin */
   GPIO_InitStruct.Pin = LED_ONBOARD_Pin;
@@ -284,18 +290,104 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LED_IN_1_Pin LED_IN_2_Pin LED_IN_3_Pin LED_IN_4_Pin
-                           LED_OUT_12_Pin LED_OUT_9_Pin LED_OUT_8_Pin LED_OUT_6_Pin
-                           LED_IN_11_Pin LED_IN_10_Pin LED_IN_7_Pin LED_IN_5_Pin */
-  GPIO_InitStruct.Pin = LED_IN_1_Pin | LED_IN_2_Pin | LED_IN_3_Pin | LED_IN_4_Pin | LED_OUT_12_Pin | LED_OUT_9_Pin | LED_OUT_8_Pin | LED_OUT_6_Pin | LED_IN_11_Pin | LED_IN_10_Pin | LED_IN_7_Pin | LED_IN_5_Pin;
+  /*Configure GPIO pins : LED_C_Pin LED_DP_Pin LED_D_Pin LED_E_Pin
+                           LED_1_Pin LED_2_Pin LED_3_Pin LED_4_Pin
+                           LED_A_Pin LED_F_Pin LED_B_Pin LED_G_Pin */
+  GPIO_InitStruct.Pin = LED_C_Pin | LED_DP_Pin | LED_D_Pin | LED_E_Pin | LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin | LED_A_Pin | LED_F_Pin | LED_B_Pin | LED_G_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
 /* USER CODE BEGIN 4 */
+static uint16_t LED_Control_Input(char ch)
+{
+  switch (ch)
+  {
+  case '0':
+    return LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_E_Pin | LED_F_Pin;
+  case '1':
+    return LED_B_Pin | LED_C_Pin;
+  case '2':
+    return LED_A_Pin | LED_B_Pin | LED_G_Pin | LED_E_Pin | LED_D_Pin;
+  case '3':
+    return LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_G_Pin;
+  case '4':
+    return LED_F_Pin | LED_G_Pin | LED_B_Pin | LED_C_Pin;
+  case '5':
+    return LED_A_Pin | LED_F_Pin | LED_G_Pin | LED_C_Pin | LED_D_Pin;
+  case '6':
+    return LED_A_Pin | LED_F_Pin | LED_G_Pin | LED_C_Pin | LED_E_Pin | LED_D_Pin;
+  case '7':
+    return LED_A_Pin | LED_B_Pin | LED_C_Pin;
+  case '8':
+    return LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_E_Pin | LED_F_Pin | LED_G_Pin;
+  case '9':
+    return LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_F_Pin | LED_G_Pin;
+  case '_':
+    return LED_D_Pin;
+  default:
+    return 0;
+  }
+}
 
+static void LED_Display_Pos(uint16_t pos_pin, uint16_t ch_pin, uint32_t delay)
+{
+  HAL_GPIO_WritePin(GPIOB, pos_pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, ch_pin, GPIO_PIN_SET);
+  HAL_Delay(delay);
+  HAL_GPIO_WritePin(GPIOB, pos_pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, ch_pin, GPIO_PIN_RESET);
+}
+
+static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay)
+{
+  const uint16_t FULL_POS = LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin;
+  const uint16_t FULL_CHAR = LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_E_Pin | LED_F_Pin | LED_G_Pin | LED_DP_Pin;
+  // HAL_GPIO_WritePin(GPIOB, FULL_POS, GPIO_PIN_SET);
+  // HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_RESET);
+
+  LED_Display_Pos(LED_1_Pin, LED_Control_Input(ch1), delay);
+  LED_Display_Pos(LED_2_Pin, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
+  LED_Display_Pos(LED_3_Pin, LED_Control_Input(ch3), delay);
+  LED_Display_Pos(LED_4_Pin, LED_Control_Input(ch4), delay);
+}
+
+static void LED_AllOn(uint32_t delay)
+{
+  const uint16_t FULL_POS = LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin;
+  const uint16_t FULL_CHAR = LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_E_Pin | LED_F_Pin | LED_G_Pin | LED_DP_Pin;
+  HAL_GPIO_WritePin(GPIOB, FULL_POS, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_SET);
+  HAL_Delay(delay);
+  HAL_GPIO_WritePin(GPIOB, FULL_POS, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_RESET);
+}
+
+static void Test_LED_Counter()
+{
+  static int counter = 0;
+  static int hits = 0;
+  hits++;
+  if (hits > 250) {
+    hits = 0;
+    counter++;
+    if (counter >= 10000) {
+      counter = 0;
+    }
+  }
+  int x = counter;
+  char ch4 = x % 10 + '0';
+  x /= 10;
+  char ch3 = x % 10 + '0';
+  x /= 10;
+  char ch2 = x % 10 + '0';
+  x /= 10;
+  char ch1 = x % 10 + '0';
+  x /= 10;
+  LED_Display(ch1, ch2, counter % 1, ch3, ch4, 1);
+}
 /* USER CODE END 4 */
 
 /**
