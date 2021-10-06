@@ -19,6 +19,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
+#include "rtc.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -32,6 +35,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define LOOP_CYCLE_MS 20
+#define MAX_BRIGHTNESS 5
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,25 +45,26 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-ADC_HandleTypeDef hadc1;
-
-RTC_HandleTypeDef hrtc;
 
 /* USER CODE BEGIN PV */
-
+char ch1, ch2, ch3, ch4;
+int colon;
+int brightness;
+int key1, key2, key3, key4;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_ADC1_Init(void);
-static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static uint16_t LED_Control_Input(char ch);
 static void LED_Display_Pos(uint16_t pos, uint16_t ch, uint32_t delay);
 static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay);
+static void LED_Display_Flush();
+static void LED_Set_Int(int x);
 static void LED_AllOn(uint32_t delay);
-static void Test_LED_Counter();
+
+static void Tick_SimpleCounter();
+static void Tick_Read_Keys();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -98,17 +104,33 @@ int main(void)
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
   LED_AllOn(5000);
+  brightness = 5;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  int count = 0;
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    Test_LED_Counter();
-    HAL_GPIO_TogglePin(GPIOC, LED_ONBOARD_Pin);
+    // Tick_Simple_Counter();
+    Tick_Read_Keys();
+    if (key1)
+      count += 1;
+    if (key2)
+      count += 2;
+    if (key3)
+      count += 3;
+    if (key4) {
+      brightness++;
+      if (brightness > MAX_BRIGHTNESS) {
+        brightness = 1;
+      }
+    }
+    LED_Set_Int(count);
+    LED_Display_Flush();
   }
   /* USER CODE END 3 */
 }
@@ -154,150 +176,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief ADC1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_ADC1_Init(void)
-{
-
-  /* USER CODE BEGIN ADC1_Init 0 */
-
-  /* USER CODE END ADC1_Init 0 */
-
-  ADC_ChannelConfTypeDef sConfig = {0};
-
-  /* USER CODE BEGIN ADC1_Init 1 */
-
-  /* USER CODE END ADC1_Init 1 */
-  /** Common config
-  */
-  hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
-  hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
-  if (HAL_ADC_Init(&hadc1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure Regular Channel
-  */
-  sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN ADC1_Init 2 */
-
-  /* USER CODE END ADC1_Init 2 */
-}
-
-/**
-  * @brief RTC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_RTC_Init(void)
-{
-
-  /* USER CODE BEGIN RTC_Init 0 */
-
-  /* USER CODE END RTC_Init 0 */
-
-  RTC_TimeTypeDef sTime = {0};
-  RTC_DateTypeDef DateToUpdate = {0};
-
-  /* USER CODE BEGIN RTC_Init 1 */
-
-  /* USER CODE END RTC_Init 1 */
-  /** Initialize RTC Only
-  */
-  hrtc.Instance = RTC;
-  hrtc.Init.AsynchPrediv = RTC_AUTO_1_SECOND;
-  hrtc.Init.OutPut = RTC_OUTPUTSOURCE_ALARM;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* USER CODE BEGIN Check_RTC_BKUP */
-
-  /* USER CODE END Check_RTC_BKUP */
-
-  /** Initialize RTC and set the Time and Date
-  */
-  sTime.Hours = 0x0;
-  sTime.Minutes = 0x0;
-  sTime.Seconds = 0x0;
-
-  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  DateToUpdate.WeekDay = RTC_WEEKDAY_MONDAY;
-  DateToUpdate.Month = RTC_MONTH_JANUARY;
-  DateToUpdate.Date = 0x1;
-  DateToUpdate.Year = 0x0;
-
-  if (HAL_RTC_SetDate(&hrtc, &DateToUpdate, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN RTC_Init 2 */
-
-  /* USER CODE END RTC_Init 2 */
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED_ONBOARD_GPIO_Port, LED_ONBOARD_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LED_C_Pin | LED_DP_Pin | LED_D_Pin | LED_E_Pin | LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin | LED_A_Pin | LED_F_Pin | LED_B_Pin | LED_G_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : LED_ONBOARD_Pin */
-  GPIO_InitStruct.Pin = LED_ONBOARD_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED_ONBOARD_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : BTN_1_Pin BTN_2_Pin BTN_3_Pin BTN_4_Pin */
-  GPIO_InitStruct.Pin = BTN_1_Pin | BTN_2_Pin | BTN_3_Pin | BTN_4_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : LED_C_Pin LED_DP_Pin LED_D_Pin LED_E_Pin
-                           LED_1_Pin LED_2_Pin LED_3_Pin LED_4_Pin
-                           LED_A_Pin LED_F_Pin LED_B_Pin LED_G_Pin */
-  GPIO_InitStruct.Pin = LED_C_Pin | LED_DP_Pin | LED_D_Pin | LED_E_Pin | LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin | LED_A_Pin | LED_F_Pin | LED_B_Pin | LED_G_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
 /* USER CODE BEGIN 4 */
@@ -354,6 +232,19 @@ static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint3
   LED_Display_Pos(LED_4_Pin, LED_Control_Input(ch4), delay);
 }
 
+static void LED_Display_Flush()
+{
+  for (int i = 0; i < brightness; i++)
+  {
+    LED_Display(ch1, ch2, colon, ch3, ch4, 1);
+  }
+  int remain = (MAX_BRIGHTNESS - brightness) * 4;
+  if (remain > 0)
+  {
+    HAL_Delay(remain);
+  }
+}
+
 static void LED_AllOn(uint32_t delay)
 {
   const uint16_t FULL_POS = LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin;
@@ -365,28 +256,60 @@ static void LED_AllOn(uint32_t delay)
   HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_RESET);
 }
 
-static void Test_LED_Counter()
+static void Tick_Simple_Counter()
 {
   static int counter = 0;
   static int hits = 0;
   hits++;
-  if (hits > 250) {
+  if (hits > 50)
+  {
     hits = 0;
     counter++;
-    if (counter >= 10000) {
+    if (counter >= 10000)
+    {
       counter = 0;
     }
   }
-  int x = counter;
-  char ch4 = x % 10 + '0';
+  LED_Set_Int(counter);
+}
+
+static void LED_Set_Int(int x)
+{
+  ch4 = x % 10 + '0';
   x /= 10;
-  char ch3 = x % 10 + '0';
+  ch3 = x % 10 + '0';
   x /= 10;
-  char ch2 = x % 10 + '0';
+  ch2 = x % 10 + '0';
   x /= 10;
-  char ch1 = x % 10 + '0';
-  x /= 10;
-  LED_Display(ch1, ch2, counter % 1, ch3, ch4, 1);
+  ch1 = x % 10 + '0';
+  colon = 0;
+}
+
+#define PROCESS_KEY(i)                         \
+  if (HAL_GPIO_ReadPin(GPIOA, BTN_##i##_Pin)) \
+  {                                            \
+    k##i##_hits = 0;                           \
+    key##i = 0;                                \
+  }                                            \
+  else                                         \
+  {                                            \
+    k##i##_hits++;                             \
+    if (k##i##_hits == 2)                      \
+    {                                          \
+      key##i = 1;                              \
+    }                                          \
+    else                                       \
+    {                                          \
+      key##i = 0;                              \
+    }                                          \
+  }
+static void Tick_Read_Keys()
+{
+  static int k1_hits = 0, k2_hits = 0, k3_hits = 0, k4_hits = 0;
+  PROCESS_KEY(1);
+  PROCESS_KEY(2);
+  PROCESS_KEY(3);
+  PROCESS_KEY(4);
 }
 /* USER CODE END 4 */
 
