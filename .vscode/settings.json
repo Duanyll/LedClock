@@ -1,0 +1,4 @@
+{
+    "cortex-debug.armToolchainPath": "C:\\ST\\STM32CubeIDE_1.7.0\\STM32CubeIDE\\plugins\\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.9-2020-q2-update.win32_2.0.0.202105311346\\tools\\bin",
+    "cortex-debug.openocdPath": "C:\\ST\\STM32CUBEIDE_1.7.0\\STM32CUBEIDE\\PLUGINS\\COM.ST.STM32CUBE.IDE.MCU.EXTERNALTOOLS.OPENOCD.WIN32_2.0.0.202105311346\\TOOLS\\BIN\\OPENOCD.EXE"
+}

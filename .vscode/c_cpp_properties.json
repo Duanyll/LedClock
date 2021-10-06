@@ -1,0 +1,20 @@
+{
+  "configurations": [
+    {
+      "name": "STM32",
+      "includePath": [
+        "Core/Inc",
+        "Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+        "Drivers/CMSIS/Include",
+        "Drivers/STM32F1xx_HAL_Driver/Inc",
+        "Drivers/STM32F1xx_HAL_Driver/Inc/Legacy"
+      ],
+      "defines": [
+        "STM32F103x6",
+        "USE_HAL_DRIVER"
+      ],
+      "compilerPath": "C:\\ST\\STM32CUBEIDE_1.7.0\\STM32CUBEIDE\\PLUGINS\\COM.ST.STM32CUBE.IDE.MCU.EXTERNALTOOLS.GNU-TOOLS-FOR-STM32.9-2020-Q2-UPDATE.WIN32_2.0.0.202105311346\\TOOLS\\BIN\\ARM-NONE-EABI-GCC.EXE"
+    }
+  ],
+  "version": 4
+}
