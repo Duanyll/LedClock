@@ -41,6 +41,7 @@
 #define MODE_TIME_HM 0
 #define MODE_TIME_MS 1
 #define MODE_SET_HM 2
+#define MODE_SHOW_LIGHT_ADC 3
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,6 +58,8 @@ int brightness;
 int key1, key2, key3, key4;
 
 int mode;
+
+int adc1_in1_res;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,6 +77,7 @@ static void LED_Set_CurrentTime_MS();
 static void Tick_Simple_Counter();
 static void Tick_Read_Keys();
 static void Tick_Set_HM();
+static void Tick_Light_ADC();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -112,6 +116,7 @@ int main(void)
   MX_ADC1_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
+  HAL_ADCEx_Calibration_Start(&hadc1);
   LED_AllOn(3000);
   brightness = MAX_BRIGHTNESS;
   mode = MODE_TIME_HM;
@@ -126,6 +131,7 @@ int main(void)
     /* USER CODE BEGIN 3 */
     // Tick_Simple_Counter();
     Tick_Read_Keys();
+    Tick_Light_ADC();
     switch (mode)
     {
     case MODE_TIME_HM:
@@ -138,6 +144,10 @@ int main(void)
       {
         mode = MODE_SET_HM;
       }
+      if (key2)
+      {
+        mode = MODE_SHOW_LIGHT_ADC;
+      }
       break;
     case MODE_TIME_MS:
       LED_Set_CurrentTime_MS();
@@ -148,6 +158,13 @@ int main(void)
       break;
     case MODE_SET_HM:
       Tick_Set_HM();
+      break;
+    case MODE_SHOW_LIGHT_ADC:
+      LED_Set_Int(adc1_in1_res);
+      if (key2)
+      {
+        mode = MODE_TIME_HM;
+      }
       break;
     default:
       LED_Set_Int(0);
@@ -172,10 +189,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI | RCC_OSCILLATORTYPE_LSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI | RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -194,7 +211,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_ADC;
-  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
+  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
   PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
@@ -407,7 +424,8 @@ static void Tick_Set_HM()
     return;
   }
 
-  if (currentPos == 2 && x1 == 2 && x2 > 3) {
+  if (currentPos == 2 && x1 == 2 && x2 > 3)
+  {
     x2 = 3;
   }
 
@@ -415,70 +433,126 @@ static void Tick_Set_HM()
   {
     switch (currentPos)
     {
-      case 1:
-        if (x1 < 2) x1++;
-        else if (x2 > 3) x2 = 3;
-        break;
-      case 2:
-        if (x1 == 2) {
-          if (x2 < 3) x2++;
-        } else {
-          if (x2 < 9) x2++;
-        }
-        break;
-      case 3:
-        if (x3 < 5) x3++;
-        break;
-      case 4:
-        if (x4 < 9) x4++;
-        break;
-      default:
-        break;
+    case 1:
+      if (x1 < 2)
+        x1++;
+      else if (x2 > 3)
+        x2 = 3;
+      break;
+    case 2:
+      if (x1 == 2)
+      {
+        if (x2 < 3)
+          x2++;
+      }
+      else
+      {
+        if (x2 < 9)
+          x2++;
+      }
+      break;
+    case 3:
+      if (x3 < 5)
+        x3++;
+      break;
+    case 4:
+      if (x4 < 9)
+        x4++;
+      break;
+    default:
+      break;
     }
   }
 
-  if (key3) {
-    switch (currentPos) {
-      case 1:
-        if (x1 > 0) x1--;
-        break;
-      case 2:
-        if (x2 > 0) x2--;
-        break;
-      case 3:
-        if (x3 > 0) x3--;
-        break;
-      case 4:
-        if (x4 > 0) x4--;
-        break;
-      default:
-        break;
+  if (key3)
+  {
+    switch (currentPos)
+    {
+    case 1:
+      if (x1 > 0)
+        x1--;
+      break;
+    case 2:
+      if (x2 > 0)
+        x2--;
+      break;
+    case 3:
+      if (x3 > 0)
+        x3--;
+      break;
+    case 4:
+      if (x4 > 0)
+        x4--;
+      break;
+    default:
+      break;
     }
   }
 
-  if (sTime1.Seconds & 1) {
+  if (sTime1.Seconds & 1)
+  {
     ch1 = ch2 = ch3 = ch4 = 0;
     colon = 1;
-    switch (currentPos) {
-      case 1:
-        ch1 = x1 + '0';
-        break;
-      case 2:
-        ch2 = x2 + '0';
-        break;
-      case 3:
-        ch3 = x3 + '0';
-        break;
-      case 4:
-        ch4 = x4 + '0';
-        break;
+    switch (currentPos)
+    {
+    case 1:
+      ch1 = x1 + '0';
+      break;
+    case 2:
+      ch2 = x2 + '0';
+      break;
+    case 3:
+      ch3 = x3 + '0';
+      break;
+    case 4:
+      ch4 = x4 + '0';
+      break;
     }
-  } else {
+  }
+  else
+  {
     ch1 = x1 + '0';
     ch2 = x2 + '0';
     ch3 = x3 + '0';
     ch4 = x4 + '0';
     colon = 0;
+  }
+}
+
+static void Tick_Light_ADC()
+{
+  static int hits = 0;
+  hits++;
+  if (hits >= 50)
+  {
+    hits = 0;
+    HAL_ADC_Start_IT(&hadc1);
+  }
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  // Read & Update The ADC Result
+  adc1_in1_res = HAL_ADC_GetValue(&hadc1);
+  if (adc1_in1_res <= 2200)
+  {
+    brightness = 5;
+  }
+  else if (adc1_in1_res <= 2500)
+  {
+    brightness = 4;
+  }
+  else if (adc1_in1_res <= 2800)
+  {
+    brightness = 3;
+  }
+  else if (adc1_in1_res <= 3200)
+  {
+    brightness = 2;
+  }
+  else
+  {
+    brightness = 1;
   }
 }
 /* USER CODE END 4 */
@@ -515,4 +589,4 @@ void assert_failed(uint8_t *file, uint32_t line)
 }
 #endif /* USE_FULL_ASSERT */
 
-  /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
