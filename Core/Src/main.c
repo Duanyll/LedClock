@@ -1,27 +1,29 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
-  * All rights reserved.</center></h2>
-  *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
+ * All rights reserved.</center></h2>
+ *
+ * This software component is licensed by ST under BSD 3-Clause license,
+ * the "License"; You may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
+ *                        opensource.org/licenses/BSD-3-Clause
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
 #include "rtc.h"
 #include "tim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -37,7 +39,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define LOOP_CYCLE_MS 20
-#define MAX_BRIGHTNESS 5
 
 #define MODE_TIME_HM 0
 #define MODE_TIME_MS 1
@@ -57,7 +58,7 @@
 /* USER CODE BEGIN PV */
 char ch1, ch2, ch3, ch4;
 int colon;
-int brightness;
+int brightness, current_light;
 int key1, key2, key3, key4;
 
 int mode;
@@ -68,7 +69,7 @@ int adc1_in1_res;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static void delay_us(uint16_t us);
+static void delay_us(uint32_t us);
 static void delay_ms(uint16_t ms);
 
 static uint16_t LED_Control_Input(char ch);
@@ -76,8 +77,7 @@ static void LED_Display_Pos(uint16_t pos, uint16_t ch, uint32_t delay);
 static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay);
 static void LED_Display_Flush();
 static void LED_Set_Int(int x);
-static void LED_AllOn(uint32_t delay);
-static void LED_Set_CurrentTime_HM(      );
+static void LED_Set_CurrentTime_HM();
 static void LED_Set_CurrentTime_MS();
 
 static void TIM_Set_AlarmState(int is_on);
@@ -89,14 +89,11 @@ static void Tick_Light_ADC();
 static void Tick_Alarm();
 static void Tick_DisplayTemp();
 
-uint8_t DHT11Init(void);
-uint8_t DHT11ReadData(uint8_t *Humi, uint8_t *Temp);
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+const unsigned char welcome_text[] = "welcome";
 /* USER CODE END 0 */
 
 /**
@@ -131,11 +128,21 @@ int main(void)
   MX_RTC_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_TIM3_Init();
+  MX_DMA_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+
+  HAL_UART_Transmit(USART1, (uint8_t *)welcome_text, sizeof(welcome_text), 0xffff);
   HAL_ADCEx_Calibration_Start(&hadc1);
-  LED_AllOn(3000);
-  brightness = MAX_BRIGHTNESS;
+  HAL_Delay(1000);
+  brightness = 0;
   mode = MODE_TIME_HM;
+  HAL_TIM_Base_Start(&htim2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 
   /* USER CODE END 2 */
 
@@ -216,7 +223,7 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE | RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
@@ -226,7 +233,8 @@ void SystemClock_Config(void)
   }
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
@@ -236,7 +244,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_ADC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
   PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -277,45 +285,31 @@ static uint16_t LED_Control_Input(char ch)
   }
 }
 
-static void LED_Display_Pos(uint16_t pos_pin, uint16_t ch_pin, uint32_t delay)
+static void LED_Display_Pos(uint16_t channel, uint16_t ch_pin, uint32_t delay)
 {
-  HAL_GPIO_WritePin(GPIOB, pos_pin, GPIO_PIN_RESET);
+  __HAL_TIM_SET_COMPARE(&htim1, channel, brightness);
+
   HAL_GPIO_WritePin(GPIOB, ch_pin, GPIO_PIN_SET);
   HAL_Delay(delay);
-  HAL_GPIO_WritePin(GPIOB, pos_pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOB, ch_pin, GPIO_PIN_RESET);
+
+  __HAL_TIM_SET_COMPARE(&htim1, channel, 255);
 }
 
 static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay)
 {
-  LED_Display_Pos(LED_1_Pin, LED_Control_Input(ch1), delay);
-  LED_Display_Pos(LED_2_Pin, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
-  LED_Display_Pos(LED_3_Pin, LED_Control_Input(ch3), delay);
-  LED_Display_Pos(LED_4_Pin, LED_Control_Input(ch4), delay);
+  LED_Display_Pos(TIM_CHANNEL_1, LED_Control_Input(ch1), delay);
+  LED_Display_Pos(TIM_CHANNEL_2, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
+  LED_Display_Pos(TIM_CHANNEL_3, LED_Control_Input(ch3), delay);
+  LED_Display_Pos(TIM_CHANNEL_4, LED_Control_Input(ch4), delay);
 }
 
 static void LED_Display_Flush()
 {
-  for (int i = 0; i < brightness; i++)
+  for (int i = 0; i < 5; i++)
   {
     LED_Display(ch1, ch2, colon, ch3, ch4, 1);
   }
-  int remain = (MAX_BRIGHTNESS - brightness) * 4;
-  if (remain > 0)
-  {
-    HAL_Delay(remain);
-  }
-}
-
-static void LED_AllOn(uint32_t delay)
-{
-  const uint16_t FULL_POS = LED_1_Pin | LED_2_Pin | LED_3_Pin | LED_4_Pin;
-  const uint16_t FULL_CHAR = LED_A_Pin | LED_B_Pin | LED_C_Pin | LED_D_Pin | LED_E_Pin | LED_F_Pin | LED_G_Pin | LED_DP_Pin;
-  HAL_GPIO_WritePin(GPIOB, FULL_POS, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_SET);
-  HAL_Delay(delay);
-  HAL_GPIO_WritePin(GPIOB, FULL_POS, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOB, FULL_CHAR, GPIO_PIN_RESET);
 }
 
 static void Tick_Simple_Counter()
@@ -547,6 +541,19 @@ static void Tick_Set_HM()
 
 static void Tick_Light_ADC()
 {
+  int expected = (current_light / 16);
+  if (expected > 240)
+  {
+    expected = 240;
+  }
+  if (brightness < expected)
+  {
+    brightness++;
+  }
+  else if (brightness > expected)
+  {
+    brightness--;
+  }
   static int hits = 0;
   hits++;
   if (hits >= 50)
@@ -559,27 +566,7 @@ static void Tick_Light_ADC()
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   // Read & Update The ADC Result
-  adc1_in1_res = HAL_ADC_GetValue(&hadc1);
-  if (adc1_in1_res <= 2200)
-  {
-    brightness = 5;
-  }
-  else if (adc1_in1_res <= 2500)
-  {
-    brightness = 4;
-  }
-  else if (adc1_in1_res <= 2800)
-  {
-    brightness = 3;
-  }
-  else if (adc1_in1_res <= 3200)
-  {
-    brightness = 2;
-  }
-  else
-  {
-    brightness = 1;
-  }
+  current_light = HAL_ADC_GetValue(&hadc1);
 }
 
 static void TIM_Set_AlarmState(int is_on)
@@ -587,13 +574,13 @@ static void TIM_Set_AlarmState(int is_on)
   static int ring_flag = 0;
   if (is_on && !ring_flag)
   {
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
     ring_flag = 1;
     return;
   }
   if (!is_on && ring_flag)
   {
-    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Stop(&htim3, TIM_CHANNEL_1);
     ring_flag = 0;
     return;
   }
@@ -609,7 +596,7 @@ static void Tick_Alarm()
     TIM_Set_AlarmState(1);
     ch1 = ch2 = ch3 = ch4 = '8';
     colon = 1;
-    brightness = MAX_BRIGHTNESS;
+    brightness = 0;
   }
   else
   {
@@ -625,121 +612,136 @@ static void Tick_Alarm()
   }
 }
 
-static void delay_us(uint16_t us)
+static void delay_us(uint32_t us)
 {
-  __HAL_TIM_SET_COUNTER(&htim2, 0); // set the counter value a 0
-  while (__HAL_TIM_GET_COUNTER(&htim2) < us)
-    ;
+
+  __IO uint32_t currentTicks = SysTick->VAL;
+  /* Number of ticks per millisecond */
+  const uint32_t tickPerMs = SysTick->LOAD + 1;
+  /* Number of ticks to count */
+  const uint32_t nbTicks = ((us - ((us > 0) ? 1 : 0)) * tickPerMs) / 1000;
+  /* Number of elapsed ticks */
+  uint32_t elapsedTicks = 0;
+  __IO uint32_t oldTicks = currentTicks;
+  do
+  {
+
+    currentTicks = SysTick->VAL;
+    elapsedTicks += (oldTicks < currentTicks) ? tickPerMs + oldTicks - currentTicks : oldTicks - currentTicks;
+    oldTicks = currentTicks;
+  } while (nbTicks > elapsedTicks);
 }
 static void delay_ms(uint16_t ms)
 {
   HAL_Delay(ms);
 }
 
-uint8_t DHT11RstAndCheck(void)
-{
-  uint8_t timer = 0;
+/* -------------------------------------------------------------------------- */
+/*                                    DHT11                                   */
+/* -------------------------------------------------------------------------- */
 
-  __set_PRIMASK(1);                                              //关�?�中�?
-  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_RESET); //输出低电�?
-  delay_ms(20);                                                  //拉低至少18ms
-  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);   //输出高电�?
-  delay_us(30);                                                  //拉高20~40us
-  while (!HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin))          //等待总线拉低，DHT11会拉�?40~80us作为响应信号
-  {
-    timer++; //总线拉低时计�?
-    delay_us(1);
-  }
-  if (timer > 100 || timer < 20) //判断响应时间
-  {
-    __set_PRIMASK(0); //�?总中�?
-    return 0;
-  }
-  timer = 0;
-  while (HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)) //等待DHT11释放总线，持续时�?40~80us
-  {
-    timer++; //总线拉高时计�?
-    delay_us(1);
-  }
-  __set_PRIMASK(0);              //�?总中�?
-  if (timer > 100 || timer < 20) //�?测响应信号之后的高电�?
-  {
-    return 0;
-  }
-  return 1;
+void Set_Pin_Output(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitStruct.Pin = GPIO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
 }
 
-/*读取�?字节数据，返回�??-读到的数�?*/
-uint8_t DHT11ReadByte(void)
+void Set_Pin_Input(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
 {
-  uint8_t i;
-  uint8_t byt = 0;
-
-  __set_PRIMASK(1); //关�?�中�?
-  for (i = 0; i < 8; i++)
-  {
-    while (HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin))
-      ; //等待低电平，数据位前都有50us低电平时�?
-    while (!HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin))
-      ; //等待高电平，�?始传输数据位
-    delay_us(40);
-    byt <<= 1;                                        //因高位在前，�?以左移byt，最低位�?0
-    if (HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)) //将�?�线电平值读取到byt�?低位�?
-    {
-      byt |= 0x01;
-    }
-  }
-  __set_PRIMASK(0); //�?总中�?
-
-  return byt;
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitStruct.Pin = GPIO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
 }
 
-/*读取�?次数据，返回值：Humi-湿度整数部分数据,Temp-温度整数部分数据；返回�??: -1-失败�?1-成功*/
-uint8_t DHT11ReadData(uint8_t *Humi, uint8_t *Temp)
+void DHT11_Start(void)
 {
-  int sta = 0;
-  uint8_t i;
-  uint8_t buf[5];
-
-  if (DHT11RstAndCheck()) //�?测响应信�?
-  {
-    for (i = 0; i < 5; i++) //读取40位数�?
-    {
-      buf[i] = DHT11ReadByte(); //读取1字节数据
-    }
-    if (buf[0] + buf[1] + buf[2] + buf[3] == buf[4]) //校验成功
-    {
-      *Humi = buf[0]; //保存湿度整数部分数据
-      *Temp = buf[2]; //保存温度整数部分数据
-    }
-    sta = 1;
-  }
-  else //响应失败返回-1
-  {
-    *Humi = 0xFF; //响应失败返回255
-    *Temp = 0xFF; //响应失败返回255
-    sta = -1;
-  }
-
-  return sta;
+  // Set_Pin_Output(DHT11_GPIO_Port, DHT11_Pin);       // set the pin as output
+  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, 0); // pull the pin low
+  delay_us(18000);                                  // wait for 18ms
+  // Set_Pin_Input(DHT11_GPIO_Port, DHT11_Pin);        // set as input
 }
 
-static void Tick_DisplayTemp() {
-  static int temp = 0, humi = 0;
-  static stage = 0;
-  if (stage == 0) {
-    DHT11ReadData(&humi, &temp);
+uint8_t DHT11_Check_Response(void)
+{
+  uint8_t Response = 0;
+  delay_us(40);
+  if (!(HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
+  {
+    delay_us(80);
+    if ((HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
+      Response = 1;
+    else
+      Response = -1;
+  }
+  while ((HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
+    ; // wait for the pin to go low
+
+  return Response;
+}
+
+uint8_t DHT11_Read(void)
+{
+  uint8_t i = 0, j = 0;
+  for (j = 0; j < 8; j++)
+  {
+    while (!(HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
+      ;                                                  // wait for the pin to go high
+    delay_us(40);                                        // wait for 40 us
+    if (!(HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin))) // if the pin is low
+    {
+      i &= ~(1 << (7 - j)); // write 0
+    }
+    else
+      i |= (1 << (7 - j)); // if the pin is high, write 1
+    while ((HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
+      ; // wait for the pin to go low
+  }
+  return i;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  END DHT11                                 */
+/* -------------------------------------------------------------------------- */
+
+static void Tick_DisplayTemp()
+{
+  static uint8_t temp = 0, humi = 0;
+  static int stage = 0;
+  if (stage == 0)
+  {
+    DHT11_Start();
+    int Presence = DHT11_Check_Response();
+    if (Presence == 1)
+    {
+      uint8_t Rh_byte1 = DHT11_Read();
+      uint8_t Rh_byte2 = DHT11_Read();
+      uint8_t Temp_byte1 = DHT11_Read();
+      uint8_t Temp_byte2 = DHT11_Read();
+      uint8_t SUM = DHT11_Read();
+
+      temp = Temp_byte1;
+      humi = Rh_byte1;
+    }
     stage = 1;
   }
-  if (stage == 1) {
+  if (stage == 1)
+  {
     LED_Set_Int(temp);
   }
-  if (stage == 2) {
+  if (stage == 2)
+  {
     LED_Set_Int(humi);
   }
-  if (key2) {
+  if (key2)
+  {
     stage++;
-    if (stage > 2) {
+    if (stage > 2)
+    {
       stage = 0;
       mode = MODE_TIME_HM;
       return;
@@ -759,11 +761,13 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
+    HAL_Delay(500);
+    HAL_GPIO_TogglePin(LED_ONBOARD_GPIO_Port, LED_ONBOARD_Pin);
   }
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef USE_FULL_ASSERT
+#ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
