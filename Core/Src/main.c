@@ -20,7 +20,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "dma.h"
 #include "rtc.h"
 #include "tim.h"
 #include "usart.h"
@@ -28,7 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -64,6 +63,8 @@ int key1, key2, key3, key4;
 int mode;
 
 int adc1_in1_res;
+
+char uart_tx_buffer[256];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,18 +83,24 @@ static void LED_Set_CurrentTime_MS();
 
 static void TIM_Set_AlarmState(int is_on);
 
-static void Tick_Simple_Counter();
 static void Tick_Read_Keys();
 static void Tick_Set_HM();
 static void Tick_Light_ADC();
 static void Tick_Alarm();
 static void Tick_DisplayTemp();
 
+void UART_Init();
+void UART_Write_Text(const char *text);
+void UART_Write_NewLine();
+void UART_Write_Int(int x);
+void UART_Flush();
+void UART_OnData();
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-const unsigned char welcome_text[] = "welcome";
+
 /* USER CODE END 0 */
 
 /**
@@ -127,18 +134,17 @@ int main(void)
   MX_ADC1_Init();
   MX_RTC_Init();
   MX_TIM1_Init();
-  MX_TIM2_Init();
   MX_TIM3_Init();
-  MX_DMA_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
-  HAL_UART_Transmit(USART1, (uint8_t *)welcome_text, sizeof(welcome_text), 0xffff);
+  UART_Init();
   HAL_ADCEx_Calibration_Start(&hadc1);
   HAL_Delay(1000);
+  UART_Write_Text("---LedClock---");
+  UART_Flush();
+
   brightness = 0;
   mode = MODE_TIME_HM;
-  HAL_TIM_Base_Start(&htim2);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
@@ -206,6 +212,7 @@ int main(void)
       break;
     }
     LED_Display_Flush();
+    UART_Flush();
   }
   /* USER CODE END 3 */
 }
@@ -237,7 +244,7 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
@@ -246,7 +253,7 @@ void SystemClock_Config(void)
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
-  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -254,6 +261,11 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/* ----------------------------------  ---------------------------------------- */
+/*                                 LED DISPLAY                                */
+/* -------------------------------------------------------------------------- */
+
 static uint16_t LED_Control_Input(char ch)
 {
   switch (ch)
@@ -312,23 +324,6 @@ static void LED_Display_Flush()
   }
 }
 
-static void Tick_Simple_Counter()
-{
-  static int counter = 0;
-  static int hits = 0;
-  hits++;
-  if (hits > 50)
-  {
-    hits = 0;
-    counter++;
-    if (counter >= 10000)
-    {
-      counter = 0;
-    }
-  }
-  LED_Set_Int(counter);
-}
-
 static void LED_Set_Int(int x)
 {
   ch4 = x % 10 + '0';
@@ -341,6 +336,10 @@ static void LED_Set_Int(int x)
   colon = 0;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                    INPUT                                   */
+/* -------------------------------------------------------------------------- */
+
 #define PROCESS_KEY(i)                        \
   if (HAL_GPIO_ReadPin(GPIOA, BTN_##i##_Pin)) \
   {                                           \
@@ -352,6 +351,7 @@ static void LED_Set_Int(int x)
     k##i##_hits++;                            \
     if (k##i##_hits == 2)                     \
     {                                         \
+      UART_Write_Text("Key " #i " down.\n");  \
       key##i = 1;                             \
     }                                         \
     else                                      \
@@ -367,6 +367,99 @@ static void Tick_Read_Keys()
   PROCESS_KEY(3);
   PROCESS_KEY(4);
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                    USART                                   */
+/* -------------------------------------------------------------------------- */
+
+struct
+{
+  char *tx_cur;
+  char tx[256];
+  char *rx_cur;
+  char rx[32];
+} uart_buf;
+
+void UART_Init()
+{
+  uart_buf.tx_cur = uart_buf.tx;
+  uart_buf.rx_cur = uart_buf.rx;
+  HAL_UART_Receive_IT(&huart1, uart_buf.rx_cur, 1);
+}
+
+void UART_Write_Text(const char *text)
+{
+  while (*text != '\0')
+  {
+    *uart_buf.tx_cur = *text;
+    text++;
+    uart_buf.tx_cur++;
+  }
+}
+void UART_Write_NewLine()
+{
+  UART_Write_Text("\n");
+}
+void UART_Write_Int(int x)
+{
+  if (x < 0)
+  {
+    *uart_buf.tx_cur = '-';
+    uart_buf.tx_cur++;
+    UART_Write_Int(-x);
+    return;
+  }
+  if (x >= 10)
+  {
+    UART_Write_Int(x / 10);
+  }
+  *uart_buf.tx_cur = x % 10 + '0';
+  uart_buf.tx_cur++;
+}
+void UART_Flush()
+{
+  if (uart_buf.tx_cur > uart_buf.tx)
+  {
+    HAL_UART_Transmit_IT(&huart1, uart_buf.tx, uart_buf.tx_cur - uart_buf.tx);
+    uart_buf.tx_cur = uart_buf.tx;
+  }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (*uart_buf.rx_cur == '#')
+  {
+    UART_OnData();
+    uart_buf.rx_cur = uart_buf.rx;
+  }
+  else
+  {
+    uart_buf.rx_cur++;
+  }
+  HAL_UART_Receive_IT(&huart1, uart_buf.rx_cur, 1);
+}
+
+void UART_OnData()
+{
+  int x = 0;
+  char *cur = uart_buf.rx;
+  while (*cur < '0' || *cur > '9')
+    cur++;
+  while (*cur >= '0' && *cur <= '9')
+  {
+    x *= 10;
+    x += *cur - '0';
+    cur++;
+  }
+  // counter = x;
+  UART_Write_Text("Recieve integer ");
+  UART_Write_Int(x);
+  UART_Write_NewLine();
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            TIME DISPLAY AND SET                            */
+/* -------------------------------------------------------------------------- */
 
 static void LED_Set_CurrentTime_HM()
 {
@@ -539,6 +632,10 @@ static void Tick_Set_HM()
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                             BRIGHTNESS CONTROL                             */
+/* -------------------------------------------------------------------------- */
+
 static void Tick_Light_ADC()
 {
   int expected = (current_light / 16);
@@ -568,6 +665,10 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
   // Read & Update The ADC Result
   current_light = HAL_ADC_GetValue(&hadc1);
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                    ALARM                                   */
+/* -------------------------------------------------------------------------- */
 
 static void TIM_Set_AlarmState(int is_on)
 {
@@ -612,6 +713,10 @@ static void Tick_Alarm()
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                    DHT11                                   */
+/* -------------------------------------------------------------------------- */
+
 static void delay_us(uint32_t us)
 {
 
@@ -635,10 +740,6 @@ static void delay_ms(uint16_t ms)
 {
   HAL_Delay(ms);
 }
-
-/* -------------------------------------------------------------------------- */
-/*                                    DHT11                                   */
-/* -------------------------------------------------------------------------- */
 
 void Set_Pin_Output(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
 {
@@ -703,10 +804,6 @@ uint8_t DHT11_Read(void)
   }
   return i;
 }
-
-/* -------------------------------------------------------------------------- */
-/*                                  END DHT11                                 */
-/* -------------------------------------------------------------------------- */
 
 static void Tick_DisplayTemp()
 {
