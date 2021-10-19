@@ -63,8 +63,7 @@ int key1, key2, key3, key4;
 int mode;
 
 int adc1_in1_res;
-
-char uart_tx_buffer[256];
+uint8_t temp, humi;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,6 +81,9 @@ static void LED_Set_CurrentTime_HM();
 static void LED_Set_CurrentTime_MS();
 
 static void TIM_Set_AlarmState(int is_on);
+
+void DHT11_Start(void);
+static void DHT11_Run();
 
 static void Tick_Read_Keys();
 static void Tick_Set_HM();
@@ -104,9 +106,9 @@ void UART_OnData();
 /* USER CODE END 0 */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
-  */
+ * @brief  The application entry point.
+ * @retval int
+ */
 int main(void)
 {
   /* USER CODE BEGIN 1 */
@@ -139,6 +141,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   UART_Init();
   HAL_ADCEx_Calibration_Start(&hadc1);
+  DHT11_Start();
   HAL_Delay(1000);
   UART_Write_Text("---LedClock---");
   UART_Flush();
@@ -218,9 +221,9 @@ int main(void)
 }
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+ * @brief System Clock Configuration
+ * @retval None
+ */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -228,9 +231,9 @@ void SystemClock_Config(void)
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE | RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
@@ -239,9 +242,8 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
@@ -251,7 +253,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_ADC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
   PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -443,6 +445,8 @@ void UART_OnData()
 {
   int x = 0;
   char *cur = uart_buf.rx;
+  char command = *cur;
+  cur++;
   while (*cur < '0' || *cur > '9')
     cur++;
   while (*cur >= '0' && *cur <= '9')
@@ -451,9 +455,48 @@ void UART_OnData()
     x += *cur - '0';
     cur++;
   }
-  // counter = x;
-  UART_Write_Text("Recieve integer ");
-  UART_Write_Int(x);
+  RTC_TimeTypeDef sTime1;
+  int digits[6];
+  switch (command)
+  {
+  case 'T':
+    for (int i = 0; i < 6; i++)
+    {
+      digits[i] = x % 10;
+      x /= 10;
+    }
+    if (digits[5] * 10 + digits[4] < 24 && digits[3] * 10 + digits[2] < 60 && digits[1] * 10 + digits[0] < 60)
+    {
+      sTime1.Seconds = (digits[1] << 4) + digits[0];
+      sTime1.Minutes = (digits[3] << 4) + digits[2];
+      sTime1.Hours = (digits[5] << 4) + digits[4];
+      HAL_RTC_SetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+      UART_Write_Text("Time set.");
+    }
+    else
+    {
+      UART_Write_Text("Illegal time.");
+    }
+    break;
+  case 'I':
+    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+    UART_Write_Text("Current time: ");
+    UART_Write_Int(sTime1.Hours >> 4);
+    UART_Write_Int(sTime1.Hours % 16);
+    UART_Write_Text(":");
+    UART_Write_Int(sTime1.Minutes >> 4);
+    UART_Write_Int(sTime1.Minutes % 16);
+    UART_Write_Text(":");
+    UART_Write_Int(sTime1.Seconds >> 4);
+    UART_Write_Int(sTime1.Seconds % 16);
+    break;
+  case 'H':
+    DHT11_Run();
+    break;
+  default:
+    UART_Write_Text("Unknown command.");
+    break;
+  }
   UART_Write_NewLine();
 }
 
@@ -761,15 +804,33 @@ void Set_Pin_Input(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
 
 void DHT11_Start(void)
 {
-  // Set_Pin_Output(DHT11_GPIO_Port, DHT11_Pin);       // set the pin as output
+  Set_Pin_Output(DHT11_GPIO_Port, DHT11_Pin);       // set the pin as output
   HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, 0); // pull the pin low
   delay_us(18000);                                  // wait for 18ms
-  // Set_Pin_Input(DHT11_GPIO_Port, DHT11_Pin);        // set as input
+  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, 1); // pull the pin high
+  delay_us(20);                                     // wait for 20us
+  Set_Pin_Input(DHT11_GPIO_Port, DHT11_Pin);        // set as input
+}
+
+int DHT11_WaitFor(int state)
+{
+  int timer = 0;
+  while (HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin) != state)
+  {
+    delay_us(1);
+    timer++;
+    if (timer > 1000)
+    {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 uint8_t DHT11_Check_Response(void)
 {
   uint8_t Response = 0;
+
   delay_us(40);
   if (!(HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
   {
@@ -779,8 +840,8 @@ uint8_t DHT11_Check_Response(void)
     else
       Response = -1;
   }
-  while ((HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
-    ; // wait for the pin to go low
+  if (DHT11_WaitFor(0))
+    return -1;
 
   return Response;
 }
@@ -790,8 +851,8 @@ uint8_t DHT11_Read(void)
   uint8_t i = 0, j = 0;
   for (j = 0; j < 8; j++)
   {
-    while (!(HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
-      ;                                                  // wait for the pin to go high
+    if (DHT11_WaitFor(1))
+      return 0;                                          // wait for the pin to go high
     delay_us(40);                                        // wait for 40 us
     if (!(HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin))) // if the pin is low
     {
@@ -799,31 +860,44 @@ uint8_t DHT11_Read(void)
     }
     else
       i |= (1 << (7 - j)); // if the pin is high, write 1
-    while ((HAL_GPIO_ReadPin(DHT11_GPIO_Port, DHT11_Pin)))
-      ; // wait for the pin to go low
+    if (DHT11_WaitFor(0))
+      return 0; // wait for the pin to go low
   }
   return i;
 }
 
+static void DHT11_Run()
+{
+  DHT11_Start();
+  int Presence = DHT11_Check_Response();
+  if (Presence == 1)
+  {
+    uint8_t Rh_byte1 = DHT11_Read();
+    uint8_t Rh_byte2 = DHT11_Read();
+    uint8_t Temp_byte1 = DHT11_Read();
+    uint8_t Temp_byte2 = DHT11_Read();
+    uint8_t SUM = DHT11_Read();
+
+    temp = Temp_byte1;
+    humi = Rh_byte1;
+    UART_Write_Text("Temp: ");
+    UART_Write_Int(temp);
+    UART_Write_NewLine();
+    UART_Write_Text("RH: ");
+    UART_Write_Int(humi);
+  }
+  else
+  {
+    UART_Write_Text("No response from DHT11");
+  }
+}
+
 static void Tick_DisplayTemp()
 {
-  static uint8_t temp = 0, humi = 0;
   static int stage = 0;
   if (stage == 0)
   {
-    DHT11_Start();
-    int Presence = DHT11_Check_Response();
-    if (Presence == 1)
-    {
-      uint8_t Rh_byte1 = DHT11_Read();
-      uint8_t Rh_byte2 = DHT11_Read();
-      uint8_t Temp_byte1 = DHT11_Read();
-      uint8_t Temp_byte2 = DHT11_Read();
-      uint8_t SUM = DHT11_Read();
-
-      temp = Temp_byte1;
-      humi = Rh_byte1;
-    }
+    DHT11_Run();
     stage = 1;
   }
   if (stage == 1)
@@ -848,9 +922,9 @@ static void Tick_DisplayTemp()
 /* USER CODE END 4 */
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -864,14 +938,14 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
