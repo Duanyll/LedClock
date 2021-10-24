@@ -37,6 +37,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define LED_DIG1_CH TIM_CHANNEL_3
+#define LED_DIG2_CH TIM_CHANNEL_2
+#define LED_DIG3_CH TIM_CHANNEL_1
+#define LED_DIG4_CH TIM_CHANNEL_4
+
 #define LOOP_CYCLE_MS 20
 
 #define MODE_TIME_HM 0
@@ -106,9 +111,9 @@ void UART_OnData();
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
   /* USER CODE BEGIN 1 */
@@ -136,8 +141,8 @@ int main(void)
   MX_ADC1_Init();
   MX_RTC_Init();
   MX_TIM1_Init();
-  MX_TIM3_Init();
-  MX_USART1_UART_Init();
+  MX_TIM2_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   UART_Init();
   HAL_ADCEx_Calibration_Start(&hadc1);
@@ -221,9 +226,9 @@ int main(void)
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
+  * @brief System Clock Configuration
+  * @retval None
+  */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -231,9 +236,9 @@ void SystemClock_Config(void)
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE | RCC_OSCILLATORTYPE_LSE;
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
@@ -242,20 +247,21 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_ADC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
-  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -312,10 +318,10 @@ static void LED_Display_Pos(uint16_t channel, uint16_t ch_pin, uint32_t delay)
 
 static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay)
 {
-  LED_Display_Pos(TIM_CHANNEL_1, LED_Control_Input(ch1), delay);
-  LED_Display_Pos(TIM_CHANNEL_2, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
-  LED_Display_Pos(TIM_CHANNEL_3, LED_Control_Input(ch3), delay);
-  LED_Display_Pos(TIM_CHANNEL_4, LED_Control_Input(ch4), delay);
+  LED_Display_Pos(LED_DIG1_CH, LED_Control_Input(ch1), delay);
+  LED_Display_Pos(LED_DIG2_CH, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
+  LED_Display_Pos(LED_DIG3_CH, LED_Control_Input(ch3), delay);
+  LED_Display_Pos(LED_DIG4_CH, LED_Control_Input(ch4), delay);
 }
 
 static void LED_Display_Flush()
@@ -386,7 +392,7 @@ void UART_Init()
 {
   uart_buf.tx_cur = uart_buf.tx;
   uart_buf.rx_cur = uart_buf.rx;
-  HAL_UART_Receive_IT(&huart1, uart_buf.rx_cur, 1);
+  HAL_UART_Receive_IT(&huart2, uart_buf.rx_cur, 1);
 }
 
 void UART_Write_Text(const char *text)
@@ -422,7 +428,7 @@ void UART_Flush()
 {
   if (uart_buf.tx_cur > uart_buf.tx)
   {
-    HAL_UART_Transmit_IT(&huart1, uart_buf.tx, uart_buf.tx_cur - uart_buf.tx);
+    HAL_UART_Transmit_IT(&huart2, uart_buf.tx, uart_buf.tx_cur - uart_buf.tx);
     uart_buf.tx_cur = uart_buf.tx;
   }
 }
@@ -438,7 +444,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   {
     uart_buf.rx_cur++;
   }
-  HAL_UART_Receive_IT(&huart1, uart_buf.rx_cur, 1);
+  HAL_UART_Receive_IT(&huart2, uart_buf.rx_cur, 1);
 }
 
 void UART_OnData()
@@ -681,7 +687,7 @@ static void Tick_Set_HM()
 
 static void Tick_Light_ADC()
 {
-  int expected = (current_light / 16);
+  int expected = 256 - (current_light / 16);
   if (expected > 240)
   {
     expected = 240;
@@ -706,7 +712,7 @@ static void Tick_Light_ADC()
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   // Read & Update The ADC Result
-  current_light = HAL_ADC_GetValue(&hadc1);
+  current_light = HAL_ADC_GetValue(hadc);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -718,13 +724,13 @@ static void TIM_Set_AlarmState(int is_on)
   static int ring_flag = 0;
   if (is_on && !ring_flag)
   {
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
     ring_flag = 1;
     return;
   }
   if (!is_on && ring_flag)
   {
-    HAL_TIM_PWM_Stop(&htim3, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_2);
     ring_flag = 0;
     return;
   }
@@ -878,6 +884,11 @@ static void DHT11_Run()
     uint8_t Temp_byte2 = DHT11_Read();
     uint8_t SUM = DHT11_Read();
 
+    if (Rh_byte1 + Rh_byte2 + Temp_byte1 + Temp_byte2 != SUM)
+    {
+      UART_Write_Text("DHT11 validation failed.");
+    }
+
     temp = Temp_byte1;
     humi = Rh_byte1;
     UART_Write_Text("Temp: ");
@@ -922,9 +933,9 @@ static void Tick_DisplayTemp()
 /* USER CODE END 4 */
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -940,12 +951,12 @@ void Error_Handler(void)
 
 #ifdef USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
