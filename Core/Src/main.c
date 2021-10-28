@@ -32,24 +32,47 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef unsigned char BOOL;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define TRUE 1
+#define FALSE 0
+
 #define LED_DIG1_CH TIM_CHANNEL_3
 #define LED_DIG2_CH TIM_CHANNEL_2
 #define LED_DIG3_CH TIM_CHANNEL_1
 #define LED_DIG4_CH TIM_CHANNEL_4
 
+#define KEY_ID_L 0
+#define KEY_ID_R 1
+#define KEY_ID_U 2
+#define KEY_ID_D 3
+
+#define KEY_L key_state[KEY_ID_L]
+#define KEY_R key_state[KEY_ID_R]
+#define KEY_U key_state[KEY_ID_U]
+#define KEY_D key_state[KEY_ID_D]
+
+#define KEY_MODE_ONCE 0
+#define KEY_MODE_LONG 1
+#define KEY_MODE_LONG_ACC 2
+
+#define MUSIC_NYAN_CAT 1
+#define MUSIC_ONLY_MY_RAILGUN 2
+#define MUSIC_ZENBON_ZAKURA 3
+
 #define LOOP_CYCLE_MS 20
 
-#define MODE_TIME_HM 0
-#define MODE_TIME_MS 1
-#define MODE_SET_HM 2
-#define MODE_SHOW_LIGHT_ADC 3
-#define MODE_ALARM 4
-#define MODE_DISPLAY_TEMP 5
+#define PAGE_HOME 0
+#define PAGE_MS 1
+#define PAGE_ALARM 2
+#define PAGE_MENU 3
+#define PAGE_SET_TIME 4
+#define PAGE_TEMP_HUMI 5
+#define PAGE_SET_ALARM 6
+#define PAGE_MUSIC 7
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,41 +83,46 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-char ch1, ch2, ch3, ch4;
-int colon;
+uint16_t display_buffer[4];
 int brightness, current_light;
-int key1, key2, key3, key4;
+BOOL key_state[4];
 
-int mode;
+int page;
 
-int adc1_in1_res;
 uint8_t temp, humi;
+
+BOOL enable_alarm;
+RTC_TimeTypeDef alarm_time;
+int alarm_music;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void delay_us(uint32_t us);
-static void delay_ms(uint16_t ms);
 
-static uint16_t LED_Control_Input(char ch);
-static void LED_Display_Pos(uint16_t pos, uint16_t ch, uint32_t delay);
-static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay);
-static void LED_Display_Flush();
-static void LED_Set_Int(int x);
-static void LED_Set_CurrentTime_HM();
-static void LED_Set_CurrentTime_MS();
+static uint16_t LED_GetFont(char ch);
+static void LED_Flush();
 
-static void TIM_Set_AlarmState(int is_on);
+static void Display_SetChar(const char *chs, BOOL colon);
+static void Display_SetInt(int x);
+static void Display_Set_CurrentTime_HM();
+static void Display_Set_CurrentTime_MS();
+
+static void Alarm_SetState(BOOL is_on, uint16_t period);
+static void Alarm_Load();
+static void Alarm_Save();
+static void Alarm_InitMusic(int id);
+static void Alarm_TickMusic();
+static void Alarm_StopMusic();
 
 void DHT11_Start(void);
 static void DHT11_Run();
 
-static void Tick_Read_Keys();
-static void Tick_Set_HM();
-static void Tick_Light_ADC();
-static void Tick_Alarm();
-static void Tick_DisplayTemp();
+static void Keys_Tick();
+static void Keys_SetMode(int key, uint8_t mode);
+
+static void Light_Tick();
 
 void UART_Init();
 void UART_Write_Text(const char *text);
@@ -103,6 +131,15 @@ void UART_Write_Int(int x);
 void UART_Flush();
 void UART_OnData();
 
+static void App_Tick();
+static void App_HomePage();
+static void App_MSPage();
+static void App_AlarmPage();
+static void App_MenuPage();
+static void App_SetTimePage();
+static void App_TempHumiPage();
+static void App_SetAlarmPage();
+static void App_MusicPage();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -148,11 +185,12 @@ int main(void)
   HAL_ADCEx_Calibration_Start(&hadc1);
   DHT11_Start();
   HAL_Delay(1000);
+  Alarm_Load();
   UART_Write_Text("---LedClock---");
   UART_Flush();
 
   brightness = 0;
-  mode = MODE_TIME_HM;
+  page = PAGE_HOME;
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
@@ -168,58 +206,10 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     // Tick_Simple_Counter();
-    Tick_Read_Keys();
-    Tick_Light_ADC();
-    switch (mode)
-    {
-    case MODE_TIME_HM:
-      LED_Set_CurrentTime_HM();
-      if (key4)
-      {
-        mode = MODE_TIME_MS;
-      }
-      if (key1)
-      {
-        mode = MODE_SET_HM;
-      }
-      if (key2)
-      {
-        mode = MODE_DISPLAY_TEMP;
-      }
-      if (key3)
-      {
-        mode = MODE_ALARM;
-      }
-      break;
-    case MODE_TIME_MS:
-      LED_Set_CurrentTime_MS();
-      if (key4)
-      {
-        mode = MODE_TIME_HM;
-      }
-      break;
-    case MODE_SET_HM:
-      Tick_Set_HM();
-      break;
-    case MODE_SHOW_LIGHT_ADC:
-      LED_Set_Int(adc1_in1_res);
-      if (key2)
-      {
-        mode = MODE_TIME_HM;
-      }
-      break;
-    case MODE_ALARM:
-      Tick_Alarm();
-      break;
-    case MODE_DISPLAY_TEMP:
-      Tick_DisplayTemp();
-      break;
-    default:
-      LED_Set_Int(0);
-      mode = MODE_TIME_HM;
-      break;
-    }
-    LED_Display_Flush();
+    Keys_Tick();
+    Light_Tick();
+    App_Tick();
+    LED_Flush();
     UART_Flush();
   }
   /* USER CODE END 3 */
@@ -238,7 +228,7 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE | RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
@@ -248,8 +238,7 @@ void SystemClock_Config(void)
   }
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
@@ -259,7 +248,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_ADC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
   PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -270,11 +259,11 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-/* ----------------------------------  ---------------------------------------- */
-/*                                 LED DISPLAY                                */
+/* -------------------------------------------------------------------------- */
+/*                               LED AND DISPLAY                              */
 /* -------------------------------------------------------------------------- */
 
-static uint16_t LED_Control_Input(char ch)
+static uint16_t LED_GetFont(char ch)
 {
   switch (ch)
   {
@@ -305,7 +294,7 @@ static uint16_t LED_Control_Input(char ch)
   }
 }
 
-static void LED_Display_Pos(uint16_t channel, uint16_t ch_pin, uint32_t delay)
+static void LED_ShowPos(uint16_t channel, uint16_t ch_pin, uint32_t delay)
 {
   __HAL_TIM_SET_COMPARE(&htim1, channel, brightness);
 
@@ -316,64 +305,126 @@ static void LED_Display_Pos(uint16_t channel, uint16_t ch_pin, uint32_t delay)
   __HAL_TIM_SET_COMPARE(&htim1, channel, 255);
 }
 
-static void LED_Display(char ch1, char ch2, int colon, char ch3, char ch4, uint32_t delay)
-{
-  LED_Display_Pos(LED_DIG1_CH, LED_Control_Input(ch1), delay);
-  LED_Display_Pos(LED_DIG2_CH, LED_Control_Input(ch2) | ((colon) ? LED_DP_Pin : 0), delay);
-  LED_Display_Pos(LED_DIG3_CH, LED_Control_Input(ch3), delay);
-  LED_Display_Pos(LED_DIG4_CH, LED_Control_Input(ch4), delay);
-}
-
-static void LED_Display_Flush()
+static void LED_Flush()
 {
   for (int i = 0; i < 5; i++)
   {
-    LED_Display(ch1, ch2, colon, ch3, ch4, 1);
+    LED_ShowPos(LED_DIG1_CH, display_buffer[0], 1);
+    LED_ShowPos(LED_DIG2_CH, display_buffer[1], 1);
+    LED_ShowPos(LED_DIG3_CH, display_buffer[2], 1);
+    LED_ShowPos(LED_DIG4_CH, display_buffer[3], 1);
   }
 }
 
-static void LED_Set_Int(int x)
+static void Display_SetChar(const char *chs, BOOL colon)
 {
-  ch4 = x % 10 + '0';
+  for (int i = 0; i < 4; i++)
+  {
+    display_buffer[i] = LED_GetFont(chs[i]);
+  }
+  if (colon)
+  {
+    display_buffer[1] |= LED_DP_Pin;
+  }
+}
+
+static void Display_SetInt(int x)
+{
+  display_buffer[3] = LED_GetFont(x % 10 + '0');
   x /= 10;
-  ch3 = x % 10 + '0';
+  display_buffer[2] = LED_GetFont(x % 10 + '0');
   x /= 10;
-  ch2 = x % 10 + '0';
+  display_buffer[1] = LED_GetFont(x % 10 + '0');
   x /= 10;
-  ch1 = x % 10 + '0';
-  colon = 0;
+  display_buffer[0] = LED_GetFont(x % 10 + '0');
+}
+
+static void Display_Set_CurrentTime_HM()
+{
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+
+  char buf[4] = {sTime1.Hours / 16 + '0',
+                 sTime1.Hours % 16 + '0',
+                 sTime1.Minutes / 16 + '0',
+                 sTime1.Minutes % 16 + '0'};
+
+  Display_SetChar(buf, sTime1.Seconds & 1);
+}
+
+static void Display_Set_CurrentTime_MS()
+{
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+
+  char buf[4] = {sTime1.Minutes / 16 + '0',
+                 sTime1.Minutes % 16 + '0',
+                 sTime1.Seconds / 16 + '0',
+                 sTime1.Seconds % 16 + '0'};
+
+  Display_SetChar(buf, TRUE);
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                    INPUT                                   */
+/*                                  KEY INPUT                                 */
 /* -------------------------------------------------------------------------- */
 
-#define PROCESS_KEY(i)                        \
-  if (HAL_GPIO_ReadPin(GPIOA, BTN_##i##_Pin)) \
-  {                                           \
-    k##i##_hits = 0;                          \
-    key##i = 0;                               \
-  }                                           \
-  else                                        \
-  {                                           \
-    k##i##_hits++;                            \
-    if (k##i##_hits == 2)                     \
-    {                                         \
-      UART_Write_Text("Key " #i " down.\n");  \
-      key##i = 1;                             \
-    }                                         \
-    else                                      \
-    {                                         \
-      key##i = 0;                             \
-    }                                         \
-  }
-static void Tick_Read_Keys()
+uint8_t key_config[4];
+static void Keys_Tick()
 {
-  static int k1_hits = 0, k2_hits = 0, k3_hits = 0, k4_hits = 0;
-  PROCESS_KEY(1);
-  PROCESS_KEY(2);
-  PROCESS_KEY(3);
-  PROCESS_KEY(4);
+  static int hits[4] = {0};
+  static uint16_t keys[] = {BTN_L_Pin, BTN_R_Pin, BTN_U_Pin, BTN_D_Pin};
+  for (int i = 0; i < 4; i++)
+  {
+    GPIO_PinState state = HAL_GPIO_ReadPin(GPIOB, keys[i]);
+    if (state)
+    {
+      hits[i] = 0;
+      key_state[i] = FALSE;
+    }
+    else
+    {
+      hits[i]++;
+      switch (key_config[i])
+      {
+      case KEY_MODE_ONCE:
+        if (hits[i] == 2)
+        {
+          key_state[i] = TRUE;
+        }
+        else
+        {
+          key_state[i] = FALSE;
+        }
+        break;
+      case KEY_MODE_LONG:
+        if (hits[i] == 2 || (hits[i] > 0 && hits[i] % 10 == 0))
+        {
+          key_state[i] = TRUE;
+        }
+        else
+        {
+          key_state[i] = FALSE;
+        }
+        break;
+      case KEY_MODE_LONG_ACC:
+        if (hits[i] == 2 || (hits[i] >= 10 && hits[i] <= 50 && hits[i] % 10 == 0) || (hits[i] > 50 && hits[i] <= 100 && hits[i] % 4 == 0) || hits[i] > 100)
+        {
+          key_state[i] = TRUE;
+        }
+        else
+        {
+          key_state[i] = FALSE;
+        }
+        break;
+      }
+    }
+  }
+}
+
+static void Keys_SetMode(int key, uint8_t mode)
+{
+  key_config[key] = mode;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -431,20 +482,6 @@ void UART_Flush()
     HAL_UART_Transmit_IT(&huart2, uart_buf.tx, uart_buf.tx_cur - uart_buf.tx);
     uart_buf.tx_cur = uart_buf.tx;
   }
-}
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  if (*uart_buf.rx_cur == '#')
-  {
-    UART_OnData();
-    uart_buf.rx_cur = uart_buf.rx;
-  }
-  else
-  {
-    uart_buf.rx_cur++;
-  }
-  HAL_UART_Receive_IT(&huart2, uart_buf.rx_cur, 1);
 }
 
 void UART_OnData()
@@ -507,187 +544,12 @@ void UART_OnData()
 }
 
 /* -------------------------------------------------------------------------- */
-/*                            TIME DISPLAY AND SET                            */
-/* -------------------------------------------------------------------------- */
-
-static void LED_Set_CurrentTime_HM()
-{
-  RTC_TimeTypeDef sTime1;
-  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-
-  ch1 = sTime1.Hours / 16 + '0';
-  ch2 = sTime1.Hours % 16 + '0';
-  ch3 = sTime1.Minutes / 16 + '0';
-  ch4 = sTime1.Minutes % 16 + '0';
-
-  colon = sTime1.Seconds & 1;
-}
-
-static void LED_Set_CurrentTime_MS()
-{
-  RTC_TimeTypeDef sTime1;
-  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-
-  ch1 = sTime1.Minutes / 16 + '0';
-  ch2 = sTime1.Minutes % 16 + '0';
-  ch3 = sTime1.Seconds / 16 + '0';
-  ch4 = sTime1.Seconds % 16 + '0';
-
-  colon = sTime1.Seconds & 1;
-}
-
-static void Tick_Set_HM()
-{
-  static int timeout = 0;
-  static int currentPos = 0;
-  static int x1, x2, x3, x4;
-  if (!key1 && !key2 && !key3 && !key4)
-  {
-    timeout++;
-    if (timeout > 1000)
-    {
-      currentPos = 0;
-      timeout = 0;
-      mode = MODE_TIME_HM;
-      return;
-    }
-  }
-  else
-  {
-    timeout = 0;
-  }
-
-  RTC_TimeTypeDef sTime1;
-  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-
-  if (currentPos == 0)
-  {
-    x1 = sTime1.Hours / 16;
-    x2 = sTime1.Hours % 16;
-    x3 = sTime1.Minutes / 16;
-    x4 = sTime1.Minutes % 16;
-    currentPos++;
-  }
-
-  if (key1)
-  {
-    currentPos++;
-  }
-
-  if (currentPos > 4)
-  {
-    sTime1.Hours = x1 * 16 + x2;
-    sTime1.Minutes = x3 * 16 + x4;
-    sTime1.Seconds = 0x00;
-    HAL_RTC_SetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-    currentPos = 0;
-    timeout = 0;
-    mode = MODE_TIME_HM;
-    return;
-  }
-
-  if (currentPos == 2 && x1 == 2 && x2 > 3)
-  {
-    x2 = 3;
-  }
-
-  if (key2)
-  {
-    switch (currentPos)
-    {
-    case 1:
-      if (x1 < 2)
-        x1++;
-      else if (x2 > 3)
-        x2 = 3;
-      break;
-    case 2:
-      if (x1 == 2)
-      {
-        if (x2 < 3)
-          x2++;
-      }
-      else
-      {
-        if (x2 < 9)
-          x2++;
-      }
-      break;
-    case 3:
-      if (x3 < 5)
-        x3++;
-      break;
-    case 4:
-      if (x4 < 9)
-        x4++;
-      break;
-    default:
-      break;
-    }
-  }
-
-  if (key3)
-  {
-    switch (currentPos)
-    {
-    case 1:
-      if (x1 > 0)
-        x1--;
-      break;
-    case 2:
-      if (x2 > 0)
-        x2--;
-      break;
-    case 3:
-      if (x3 > 0)
-        x3--;
-      break;
-    case 4:
-      if (x4 > 0)
-        x4--;
-      break;
-    default:
-      break;
-    }
-  }
-
-  if (sTime1.Seconds & 1)
-  {
-    ch1 = ch2 = ch3 = ch4 = 0;
-    colon = 1;
-    switch (currentPos)
-    {
-    case 1:
-      ch1 = x1 + '0';
-      break;
-    case 2:
-      ch2 = x2 + '0';
-      break;
-    case 3:
-      ch3 = x3 + '0';
-      break;
-    case 4:
-      ch4 = x4 + '0';
-      break;
-    }
-  }
-  else
-  {
-    ch1 = x1 + '0';
-    ch2 = x2 + '0';
-    ch3 = x3 + '0';
-    ch4 = x4 + '0';
-    colon = 0;
-  }
-}
-
-/* -------------------------------------------------------------------------- */
 /*                             BRIGHTNESS CONTROL                             */
 /* -------------------------------------------------------------------------- */
 
-static void Tick_Light_ADC()
+static void Light_Tick()
 {
-  int expected = 256 - (current_light / 16);
+  int expected = (current_light / 16);
   if (expected > 240)
   {
     expected = 240;
@@ -719,9 +581,17 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 /*                                    ALARM                                   */
 /* -------------------------------------------------------------------------- */
 
-static void TIM_Set_AlarmState(int is_on)
+static void Alarm_SetState(BOOL is_on, uint16_t period)
 {
-  static int ring_flag = 0;
+  static BOOL ring_flag = FALSE;
+  static uint16_t last_period = 0;
+  if (period != last_period)
+  {
+    __HAL_TIM_SetCounter(&htim2, 0);
+    __HAL_TIM_SET_AUTORELOAD(&htim2, period);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (period >> 1));
+    last_period = period;
+  }
   if (is_on && !ring_flag)
   {
     HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
@@ -736,30 +606,306 @@ static void TIM_Set_AlarmState(int is_on)
   }
 }
 
-static void Tick_Alarm()
+static void Alarm_Load()
 {
-  RTC_TimeTypeDef sTime1;
-  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-
-  if (sTime1.Seconds & 1)
+  uint32_t state1 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR2);
+  uint32_t state2 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR3);
+  uint32_t state3 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR4);
+  if (state1 == 0 || (state1 & 0xFF) == 0)
   {
-    TIM_Set_AlarmState(1);
-    ch1 = ch2 = ch3 = ch4 = '8';
-    colon = 1;
-    brightness = 0;
+    enable_alarm = FALSE;
   }
   else
   {
-    TIM_Set_AlarmState(0);
-    LED_Set_CurrentTime_HM();
+    enable_alarm = TRUE;
   }
+  alarm_time.Hours = (state2 >> 8) & 0xFF;
+  alarm_time.Minutes = state2 & 0xFF;
+  alarm_time.Seconds = (state1 >> 8) & 0xFF;
 
-  if (key1 || key2 || key3 || key3)
+  alarm_music = state3 & 0xFF;
+}
+
+static void Alarm_Save()
+{
+  uint32_t state1 = 0;
+  uint32_t state2 = 0;
+  uint32_t state3 = alarm_music;
+  if (enable_alarm)
+    state1 |= 0x01;
+  state1 |= alarm_time.Seconds << 8;
+  state2 |= alarm_time.Minutes;
+  state2 |= alarm_time.Hours << 8;
+  HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR2, state1);
+  HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR3, state2);
+  HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR4, state3);
+}
+
+#define NYAN_CAT_LENGTH 32
+#define NYAN_CAT_SPEED 3
+uint32_t nyan_cat_data[] = {
+    0xd1e1ab18,
+    0x98717191,
+    0xa19879bd,
+    0xebd9b797,
+    0xb1d1ebd9,
+    0xb7ab9879,
+    0xa1789d9a,
+    0x87917191,
+    0xd1e1ab18,
+    0x98717191,
+    0xa19879bd,
+    0xebd9b797,
+    0xb1d1ebd9,
+    0xb7ab9879,
+    0xa1789d9a,
+    0x87917171,
+    0x71457145,
+    0x79b7cbcd,
+    0x71714574,
+    0xcb973234,
+    0x71457145,
+    0x779b7454,
+    0x71767457,
+    0xcbcd7161,
+    0x71457145,
+    0x79b7cbcd,
+    0x71714574,
+    0xcb973234,
+    0x71457145,
+    0x779b7454,
+    0x71767457,
+    0xcbcd7191,
+};
+
+#define ONLY_MY_RAILGUN_LENGTH 32
+#define ONLY_MY_RAILGUN_SPEED 3
+uint32_t only_my_railgun_data[] = {
+    0x21031021,
+    0x00716141,
+    0x41551141,
+    0x41551141,
+    0x41551151,
+    0x51617191,
+    0x61114111,
+    0xc1119111,
+    0x911911b1,
+    0x00716141,
+    0x41551141,
+    0x41551141,
+    0x41551151,
+    0x51617191,
+    0x51111111,
+    0x51617191,
+    0x61141121,
+    0x00716141,
+    0x41551141,
+    0x41551141,
+    0x41551151,
+    0x51617191,
+    0x51111111,
+    0x51617191,
+    0x61114111,
+    0x21114111,
+    0x41551171,
+    0x61421141,
+    0x41551111,
+    0x11111111,
+    0x11111111,
+    0x11111111,
+};
+
+uint16_t note_period_b[] = {
+    0,
+    0,
+    25723,
+    24242,
+    21621,
+    19277,
+    17167,
+    16194,
+    15238,
+    14440,
+    13628,
+    12861,
+    12139,
+    10810,
+    9638,
+};
+
+#define ZENBON_ZAKURA_LENGTH 80
+#define ZENBON_ZAKURA_SPEED 2
+uint32_t zenbon_zakura_data[] = {
+    0x91a16565,
+    0x91a16565,
+    0x91a16565,
+    0x81716151,
+    0x91a16565,
+    0x91a16565,
+    0x91a1c1f1,
+    0xefedc1a1,
+    0x91a16565,
+    0x91a16565,
+    0x91a16565,
+    0x81716151,
+    0xa9acdca9,
+    0x6181a1c1,
+    0xd1d111c1,
+    0xd1111111,
+    0x61116115,
+    0x618191a1,
+    0x61116115,
+    0x61513151,
+    0x61116115,
+    0x618191a1,
+    0xa1119111,
+    0x81116111,
+    0x61116115,
+    0x618191a1,
+    0x61116115,
+    0x61513151,
+    0x61116115,
+    0x51618191,
+    0xa1119111,
+    0x81116111,
+    0x81117111,
+    0x61115111,
+    0x51563121,
+    0x31111111,
+    0x31516111,
+    0x91117111,
+    0x81117151,
+    0x61111111,
+    0x81117111,
+    0x61115111,
+    0x51563121,
+    0x31113151,
+    0x61611161,
+    0x81119111,
+    0x71111111,
+    0x11116181,
+    0x911911a1,
+    0xa11111a1,
+    0xc1d19181,
+    0xa1116181,
+    0x919111a1,
+    0xa111a1a1,
+    0xb1a19181,
+    0x81116181,
+    0x911911a1,
+    0xa11111a1,
+    0xc1d19181,
+    0xa1116181,
+    0xb111a111,
+    0x91118111,
+    0x81917151,
+    0x61116181,
+    0x911911a1,
+    0xa11111a1,
+    0xc1d19181,
+    0xa1116181,
+    0x919111a1,
+    0xa111a1a1,
+    0xb1a19181,
+    0x81116181,
+    0x911911a1,
+    0xa11111a1,
+    0xc1d19181,
+    0xa1116181,
+    0xb111a111,
+    0x91118111,
+    0x9181a1c1,
+    0xd1111111,
+
+};
+
+uint16_t note_period_f[] = {
+    0,
+    0,
+    20408, 18181, 17167, 15296, 13628, 12139, 11461, 10204, 9090, 8583, 7648, 6808, 6065, 5726};
+
+int music_alt, music_tick, music_speed;
+uint32_t *music_ptr;
+uint32_t *music_end;
+uint16_t *note_period;
+int last_note;
+static void Alarm_InitMusic(int id)
+{
+  music_alt = music_tick = 0;
+  last_note = 2;
+  switch (id)
   {
-    TIM_Set_AlarmState(0);
-    mode = MODE_TIME_HM;
-    return;
+  case MUSIC_NYAN_CAT:
+    music_ptr = nyan_cat_data;
+    music_end = nyan_cat_data + NYAN_CAT_LENGTH;
+    music_speed = NYAN_CAT_SPEED;
+    note_period = note_period_b;
+    break;
+  case MUSIC_ONLY_MY_RAILGUN:
+    music_ptr = only_my_railgun_data;
+    music_end = only_my_railgun_data + ONLY_MY_RAILGUN_LENGTH;
+    music_speed = ONLY_MY_RAILGUN_SPEED;
+    note_period = note_period_b;
+    break;
+  case MUSIC_ZENBON_ZAKURA:
+    music_ptr = zenbon_zakura_data;
+    music_end = zenbon_zakura_data + ZENBON_ZAKURA_LENGTH;
+    music_speed = ZENBON_ZAKURA_SPEED;
+    note_period = note_period_f;
+    break;
+  default:
+    music_ptr = NULL;
+    break;
   }
+}
+static void Alarm_TickMusic()
+{
+  if (music_ptr == NULL || music_ptr >= music_end)
+  {
+    Alarm_StopMusic();
+    return;
+  };
+  music_tick++;
+  if (music_tick % NYAN_CAT_SPEED == 0)
+  {
+    music_alt++;
+    if (music_alt >= 8)
+    {
+      music_alt = 0;
+      music_ptr++;
+      if (music_ptr >= music_end)
+      {
+        Alarm_StopMusic();
+        return;
+      }
+    }
+  }
+  int cur = ((*music_ptr) >> ((7 - music_alt) * 4)) & 0xF;
+  if (cur == 0)
+  {
+    Alarm_SetState(FALSE, note_period[last_note]);
+  }
+  else if (cur == 1)
+  {
+    Alarm_SetState(TRUE, note_period[last_note]);
+  }
+  else
+  {
+    if (music_tick % NYAN_CAT_SPEED != 0)
+    {
+      Alarm_SetState(TRUE, note_period[cur]);
+      last_note = cur;
+    }
+    else
+    {
+      Alarm_SetState(FALSE, note_period[cur]);
+    }
+  }
+}
+static void Alarm_StopMusic()
+{
+  Alarm_SetState(FALSE, 0xC00);
+  music_ptr = NULL;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -784,10 +930,6 @@ static void delay_us(uint32_t us)
     elapsedTicks += (oldTicks < currentTicks) ? tickPerMs + oldTicks - currentTicks : oldTicks - currentTicks;
     oldTicks = currentTicks;
   } while (nbTicks > elapsedTicks);
-}
-static void delay_ms(uint16_t ms)
-{
-  HAL_Delay(ms);
 }
 
 void Set_Pin_Output(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
@@ -903,7 +1045,317 @@ static void DHT11_Run()
   }
 }
 
-static void Tick_DisplayTemp()
+/* -------------------------------------------------------------------------- */
+/*                                     APP                                    */
+/* -------------------------------------------------------------------------- */
+
+static void App_Tick()
+{
+  switch (page)
+  {
+  case PAGE_HOME:
+    App_HomePage();
+    break;
+  case PAGE_MS:
+    App_MSPage();
+    break;
+  case PAGE_ALARM:
+    App_AlarmPage();
+    break;
+  case PAGE_MENU:
+    App_MenuPage();
+    break;
+  case PAGE_SET_TIME:
+    App_SetTimePage();
+    break;
+  case PAGE_TEMP_HUMI:
+    App_TempHumiPage();
+    break;
+  case PAGE_SET_ALARM:
+    App_SetAlarmPage();
+    break;
+  case PAGE_MUSIC:
+    App_MusicPage();
+    break;
+  default:
+    page = PAGE_HOME;
+    break;
+  }
+}
+
+static void App_HomePage()
+{
+  Display_Set_CurrentTime_HM();
+  if (enable_alarm)
+  {
+    RTC_TimeTypeDef sTime1;
+    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+    if (sTime1.Hours == alarm_time.Hours && sTime1.Minutes == alarm_time.Minutes && sTime1.Seconds == alarm_time.Seconds)
+    {
+      Alarm_InitMusic(MUSIC_ONLY_MY_RAILGUN);
+      page = PAGE_ALARM;
+      return;
+    }
+  }
+  if (KEY_R)
+  {
+    page = PAGE_MS;
+    return;
+  }
+  if (KEY_U || KEY_D)
+  {
+    page = PAGE_MENU;
+    return;
+  }
+}
+
+static void App_MSPage()
+{
+  Display_Set_CurrentTime_MS();
+  if (KEY_L)
+  {
+    page = PAGE_HOME;
+    return;
+  }
+  if (KEY_U || KEY_D)
+  {
+    page = PAGE_MENU;
+    return;
+  }
+}
+
+BOOL App_MenuOption(int cursor)
+{
+  switch (cursor)
+  {
+  case 0:
+    page = PAGE_SET_TIME;
+    break;
+  case 1:
+    page = PAGE_TEMP_HUMI;
+    break;
+  case 2:
+    page = PAGE_MUSIC;
+    break;
+  case 4:
+    enable_alarm = !enable_alarm;
+    Alarm_Save();
+    return FALSE;
+  case 5:
+    page = PAGE_SET_ALARM;
+    break;
+  case 7:
+    page = PAGE_HOME;
+    break;
+  default:
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static void App_MenuPage()
+{
+  static int cursor = 0;
+  if (cursor < 0 || cursor > 7)
+  {
+    cursor = 0;
+  }
+  display_buffer[0] = display_buffer[1] = display_buffer[2] = display_buffer[3] = 0;
+  if (enable_alarm)
+    display_buffer[0] |= LED_DP_Pin;
+  if (cursor < 4)
+  {
+    display_buffer[cursor] |= LED_A_Pin;
+    if (KEY_U)
+    {
+      if (App_MenuOption(cursor))
+        cursor = 0;
+      return;
+    }
+    if (KEY_D)
+    {
+      cursor += 4;
+      return;
+    }
+  }
+  else
+  {
+    display_buffer[cursor - 4] |= LED_D_Pin;
+    if (KEY_D)
+    {
+      if (App_MenuOption(cursor))
+        cursor = 0;
+      return;
+    }
+    if (KEY_U)
+    {
+      cursor -= 4;
+      return;
+    }
+  }
+  if (KEY_L)
+  {
+    if (cursor > 0)
+      cursor--;
+    return;
+  }
+  if (KEY_R)
+  {
+    if (cursor < 7)
+      cursor++;
+  }
+}
+
+static void App_SetTimePage()
+{
+  static int cursor = -1;
+  static char buffer[4] = {0};
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+  if (cursor == -1)
+  {
+    buffer[0] = sTime1.Hours / 16 + '0';
+    buffer[1] = sTime1.Hours % 16 + '0';
+    buffer[2] = sTime1.Minutes / 16 + '0';
+    buffer[3] = sTime1.Minutes % 16 + '0';
+    cursor = 0;
+
+    Keys_SetMode(KEY_ID_U, KEY_MODE_LONG);
+    Keys_SetMode(KEY_ID_D, KEY_MODE_LONG);
+  }
+
+  if (sTime1.Seconds & 1)
+  {
+    Display_SetChar(buffer, TRUE);
+  }
+  else
+  {
+    char buffer1[] = {0};
+    buffer1[cursor] = buffer[cursor];
+    Display_SetChar(buffer1, TRUE);
+  }
+
+  if (KEY_R)
+  {
+    if (cursor >= 3)
+    {
+      cursor = -1;
+      sTime1.Hours = ((buffer[0] - '0') << 4) + (buffer[1] - '0');
+      sTime1.Minutes = ((buffer[2] - '0') << 4) + (buffer[3] - '0');
+      sTime1.Seconds = 0x00;
+      HAL_RTC_SetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+
+      Keys_SetMode(KEY_ID_U, KEY_MODE_ONCE);
+      Keys_SetMode(KEY_ID_D, KEY_MODE_ONCE);
+      page = PAGE_HOME;
+    }
+    else
+    {
+      cursor++;
+    }
+    return;
+  }
+  if (KEY_L)
+  {
+    if (cursor <= 0)
+    {
+      cursor = -1;
+      page = PAGE_HOME;
+    }
+    else
+    {
+      cursor--;
+    }
+    return;
+  }
+  if (KEY_U)
+  {
+    char upper = '0';
+    switch (cursor)
+    {
+    case 0:
+      upper = '2';
+      break;
+    case 1:
+      if (buffer[0] == '2')
+      {
+        upper = '3';
+      }
+      else
+      {
+        upper = '9';
+      }
+      break;
+    case 2:
+      upper = '5';
+      break;
+    case 3:
+      upper = '9';
+      break;
+    }
+    if (buffer[cursor] < upper)
+    {
+      buffer[cursor]++;
+      if (cursor == 0 && buffer[0] == 2 && buffer[1] > '3')
+      {
+        buffer[1] = '3';
+      }
+    }
+    return;
+  }
+  if (KEY_D)
+  {
+    if (buffer[cursor] > '0')
+    {
+      buffer[cursor]--;
+    }
+  }
+}
+
+static void App_AlarmPage()
+{
+  static BOOL ringing = FALSE;
+
+  if (!ringing)
+  {
+    ringing = TRUE;
+    Alarm_InitMusic(alarm_music);
+  }
+
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+  if (alarm_music)
+  {
+    Alarm_TickMusic();
+  }
+
+  if (sTime1.Seconds & 1)
+  {
+    Display_SetChar("8888", FALSE);
+    if (alarm_music == 0)
+    {
+      Alarm_SetState(TRUE, 0xC00);
+    }
+  }
+  else
+  {
+    Display_Set_CurrentTime_HM();
+    if (alarm_music == 0)
+    {
+      Alarm_SetState(FALSE, 0xC00);
+    }
+  }
+
+  if (KEY_L || KEY_R || KEY_U || KEY_D || (alarm_music && music_ptr == NULL))
+  {
+    Alarm_StopMusic();
+    ringing = FALSE;
+    page = PAGE_HOME;
+    return;
+  }
+}
+
+static void App_TempHumiPage()
 {
   static int stage = 0;
   if (stage == 0)
@@ -913,21 +1365,162 @@ static void Tick_DisplayTemp()
   }
   if (stage == 1)
   {
-    LED_Set_Int(temp);
+    Display_SetInt(temp);
   }
   if (stage == 2)
   {
-    LED_Set_Int(humi);
+    Display_SetInt(humi);
   }
-  if (key2)
+  if (KEY_R)
   {
     stage++;
     if (stage > 2)
     {
       stage = 0;
-      mode = MODE_TIME_HM;
+      page = PAGE_HOME;
       return;
     }
+  }
+}
+
+static void App_SetAlarmPage()
+{
+  static int cursor = -1;
+  static char buffer[4] = {0};
+  RTC_TimeTypeDef sTime1;
+  HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+  if (cursor == -1)
+  {
+    buffer[0] = alarm_time.Hours / 16 + '0';
+    buffer[1] = alarm_time.Hours % 16 + '0';
+    buffer[2] = alarm_time.Minutes / 16 + '0';
+    buffer[3] = alarm_time.Minutes % 16 + '0';
+    cursor = 0;
+
+    Keys_SetMode(KEY_ID_U, KEY_MODE_LONG);
+    Keys_SetMode(KEY_ID_D, KEY_MODE_LONG);
+  }
+
+  if (sTime1.Seconds & 1)
+  {
+    Display_SetChar(buffer, TRUE);
+  }
+  else
+  {
+    char buffer1[] = {0};
+    buffer1[cursor] = buffer[cursor];
+    Display_SetChar(buffer1, TRUE);
+  }
+
+  if (KEY_R)
+  {
+    if (cursor >= 3)
+    {
+      cursor = -1;
+      alarm_time.Hours = ((buffer[0] - '0') << 4) + (buffer[1] - '0');
+      alarm_time.Minutes = ((buffer[2] - '0') << 4) + (buffer[3] - '0');
+      alarm_time.Seconds = 0x00;
+      Alarm_Save();
+      Keys_SetMode(KEY_ID_U, KEY_MODE_ONCE);
+      Keys_SetMode(KEY_ID_D, KEY_MODE_ONCE);
+
+      page = PAGE_HOME;
+    }
+    else
+    {
+      cursor++;
+    }
+    return;
+  }
+  if (KEY_L)
+  {
+    if (cursor <= 0)
+    {
+      cursor = -1;
+      page = PAGE_HOME;
+    }
+    else
+    {
+      cursor--;
+    }
+    return;
+  }
+  if (KEY_U)
+  {
+    char upper = '0';
+    switch (cursor)
+    {
+    case 0:
+      upper = '2';
+      break;
+    case 1:
+      if (buffer[0] == '2')
+      {
+        upper = '3';
+      }
+      else
+      {
+        upper = '9';
+      }
+      break;
+    case 2:
+      upper = '5';
+      break;
+    case 3:
+      upper = '9';
+      break;
+    }
+    if (buffer[cursor] < upper)
+    {
+      buffer[cursor]++;
+      if (cursor == 0 && buffer[0] == 2 && buffer[1] > '3')
+      {
+        buffer[1] = '3';
+      }
+    }
+    return;
+  }
+  if (KEY_D)
+  {
+    if (buffer[cursor] > '0')
+    {
+      buffer[cursor]--;
+    }
+  }
+}
+
+static void App_MusicPage()
+{
+  Display_SetInt(alarm_music);
+  Alarm_TickMusic();
+  if (KEY_L)
+  {
+    page = PAGE_HOME;
+    Alarm_StopMusic();
+    return;
+  }
+  if (KEY_U)
+  {
+    if (alarm_music < 3)
+    {
+      alarm_music++;
+      Alarm_Save();
+    }
+    return;
+  }
+  if (KEY_D)
+  {
+    if (alarm_music > 0)
+    {
+      alarm_music--;
+      Alarm_Save();
+    }
+    return;
+  }
+  if (KEY_R)
+  {
+    Alarm_InitMusic(alarm_music);
+    return;
   }
 }
 /* USER CODE END 4 */
