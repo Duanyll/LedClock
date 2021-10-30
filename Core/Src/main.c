@@ -67,13 +67,19 @@ typedef unsigned char BOOL;
 #define LOOP_CYCLE_MS 20
 
 #define PAGE_HOME 0
-#define PAGE_MS 1
+// #define PAGE_MS 1
 #define PAGE_ALARM 2
 #define PAGE_MENU 3
 #define PAGE_SET_TIME 4
 #define PAGE_TEMP_HUMI 5
 #define PAGE_SET_ALARM 6
 #define PAGE_MUSIC 7
+#define PAGE_STOPWATCH 8
+#define PAGE_COUNTDOWN 9
+
+#define SCREEN_HM 0
+#define SCREEN_MS 1
+#define SCREEN_SM 2
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -88,12 +94,15 @@ uint16_t display_buffer[4];
 int brightness, current_light;
 BOOL key_state[4];
 
+int second_timestamp = 0;
+
 int page;
 
 uint8_t temp = 20, humi = 68;
 
 BOOL enable_alarm;
 RTC_TimeTypeDef alarm_time;
+RTC_TimeTypeDef sTime;
 int alarm_music;
 /* USER CODE END PV */
 
@@ -107,8 +116,9 @@ static void LED_Flush();
 
 static void Display_SetChar(const char *chs, BOOL colon);
 static void Display_SetInt(int x);
-static void Display_Set_CurrentTime_HM();
-static void Display_Set_CurrentTime_MS();
+static void Display_SetCurrentTimeHM();
+static void Display_SetCurrentTimeMS();
+static void Display_SetTimestamp(int timestamp, int screen);
 
 static void Alarm_SetState(BOOL is_on, uint16_t period);
 static void Alarm_Load();
@@ -134,13 +144,15 @@ void UART_OnData();
 
 static void App_Tick();
 static void App_HomePage();
-static void App_MSPage();
+// static void App_MSPage();
 static void App_AlarmPage();
 static void App_MenuPage();
 static void App_SetTimePage();
 static void App_TempHumiPage();
 static void App_SetAlarmPage();
 static void App_MusicPage();
+static void App_StopwatchPage();
+static void App_CountdownPage();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -182,7 +194,11 @@ int main(void) {
     MX_TIM1_Init();
     MX_TIM2_Init();
     MX_USART2_UART_Init();
+    MX_TIM3_Init();
     /* USER CODE BEGIN 2 */
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
+    HAL_RTCEx_SetSecond_IT(&hrtc);
+    HAL_TIM_Base_Start(&htim3);
     UART_Init();
     HAL_ADCEx_Calibration_Start(&hadc1);
     DHT11_Start();
@@ -256,6 +272,16 @@ void SystemClock_Config(void) {
 }
 
 /* USER CODE BEGIN 4 */
+
+/* -------------------------------------------------------------------------- */
+/*                                    TIMER                                   */
+/* -------------------------------------------------------------------------- */
+
+void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc) {
+    HAL_RTC_GetTime(hrtc, &sTime, RTC_FORMAT_BCD);
+    __HAL_TIM_SetCounter(&htim3, 0);
+    second_timestamp++;
+}
 
 /* -------------------------------------------------------------------------- */
 /*                               LED AND DISPLAY                              */
@@ -332,29 +358,57 @@ static void Display_SetInt(int x) {
     display_buffer[0] = LED_GetFont(x % 10 + '0');
 }
 
-static void Display_Set_CurrentTime_HM() {
-    RTC_TimeTypeDef sTime1;
-    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+static void Display_SetCurrentTimeHM() {
+    char buf[4] = {sTime.Hours / 16 + '0', sTime.Hours % 16 + '0',
+                   sTime.Minutes / 16 + '0', sTime.Minutes % 16 + '0'};
 
-    char buf[4] = {sTime1.Hours / 16 + '0', sTime1.Hours % 16 + '0',
-                   sTime1.Minutes / 16 + '0', sTime1.Minutes % 16 + '0'};
-
-    Display_SetChar(buf, sTime1.Seconds & 1);
+    Display_SetChar(buf, sTime.Seconds & 1);
 }
 
-static void Display_Set_CurrentTime_MS() {
-    RTC_TimeTypeDef sTime1;
-    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-
-    char buf[4] = {sTime1.Minutes / 16 + '0', sTime1.Minutes % 16 + '0',
-                   sTime1.Seconds / 16 + '0', sTime1.Seconds % 16 + '0'};
+static void Display_SetCurrentTimeMS() {
+    char buf[4] = {sTime.Minutes / 16 + '0', sTime.Minutes % 16 + '0',
+                   sTime.Seconds / 16 + '0', sTime.Seconds % 16 + '0'};
 
     Display_SetChar(buf, TRUE);
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                  KEY INPUT                                 */
-/* -------------------------------------------------------------------------- */
+static void Display_SetTimestamp(int timestamp, int screen) {
+    char buf[4] = {0};
+    int second = timestamp / 1000;
+    int ms = timestamp % 1000;
+    int hours = second / 3600;
+    int minutes = (second % 3600) / 60;
+    int seconds = second % 60;
+    switch (screen) {
+        case SCREEN_HM:
+            buf[0] = hours / 10 + '0';
+            buf[1] = hours % 10 + '0';
+            buf[2] = minutes / 10 + '0';
+            buf[3] = minutes % 10 + '0';
+            Display_SetChar(buf, seconds & 1);
+            break;
+        case SCREEN_MS:
+            buf[0] = minutes / 10 + '0';
+            buf[1] = minutes % 10 + '0';
+            buf[2] = seconds / 10 + '0';
+            buf[3] = seconds % 10 + '0';
+            Display_SetChar(buf, TRUE);
+            break;
+        case SCREEN_SM:
+            buf[0] = seconds / 10 + '0';
+            buf[1] = seconds % 10 + '0';
+            buf[2] = ms / 100 + '0';
+            buf[3] = (ms % 100) / 10 + '0';
+            Display_SetChar(buf, TRUE);
+            break;
+    }
+}
+
+/* --------------------------------------------------------------------------
+ */
+/*                                  KEY INPUT */
+/* --------------------------------------------------------------------------
+ */
 
 uint8_t key_config[4];
 static void Keys_Tick() {
@@ -466,7 +520,6 @@ void UART_OnData() {
         x += *cur - '0';
         cur++;
     }
-    RTC_TimeTypeDef sTime1;
     int digits[6];
     switch (command) {
         case 'T':
@@ -477,26 +530,25 @@ void UART_OnData() {
             if (digits[5] * 10 + digits[4] < 24 &&
                 digits[3] * 10 + digits[2] < 60 &&
                 digits[1] * 10 + digits[0] < 60) {
-                sTime1.Seconds = (digits[1] << 4) + digits[0];
-                sTime1.Minutes = (digits[3] << 4) + digits[2];
-                sTime1.Hours = (digits[5] << 4) + digits[4];
-                HAL_RTC_SetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+                sTime.Seconds = (digits[1] << 4) + digits[0];
+                sTime.Minutes = (digits[3] << 4) + digits[2];
+                sTime.Hours = (digits[5] << 4) + digits[4];
+                HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
                 UART_Write_Text("Time set.");
             } else {
                 UART_Write_Text("Illegal time.");
             }
             break;
         case 'I':
-            HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
             UART_Write_Text("Current time: ");
-            UART_Write_Int(sTime1.Hours >> 4);
-            UART_Write_Int(sTime1.Hours % 16);
+            UART_Write_Int(sTime.Hours >> 4);
+            UART_Write_Int(sTime.Hours % 16);
             UART_Write_Text(":");
-            UART_Write_Int(sTime1.Minutes >> 4);
-            UART_Write_Int(sTime1.Minutes % 16);
+            UART_Write_Int(sTime.Minutes >> 4);
+            UART_Write_Int(sTime.Minutes % 16);
             UART_Write_Text(":");
-            UART_Write_Int(sTime1.Seconds >> 4);
-            UART_Write_Int(sTime1.Seconds % 16);
+            UART_Write_Int(sTime.Seconds >> 4);
+            UART_Write_Int(sTime.Seconds % 16);
             break;
         case 'H':
             DHT11_Run();
@@ -832,9 +884,6 @@ static void App_Tick() {
         case PAGE_HOME:
             App_HomePage();
             break;
-        case PAGE_MS:
-            App_MSPage();
-            break;
         case PAGE_ALARM:
             App_AlarmPage();
             break;
@@ -853,6 +902,12 @@ static void App_Tick() {
         case PAGE_MUSIC:
             App_MusicPage();
             break;
+        case PAGE_STOPWATCH:
+            App_StopwatchPage();
+            break;
+        case PAGE_COUNTDOWN:
+            App_CountdownPage();
+            break;
         default:
             page = PAGE_HOME;
             break;
@@ -860,33 +915,37 @@ static void App_Tick() {
 }
 
 static void App_HomePage() {
-    Display_Set_CurrentTime_HM();
+    static int screen = 0;
+    switch (screen) {
+        case SCREEN_HM:
+            Display_SetCurrentTimeHM();
+            break;
+        case SCREEN_MS:
+            Display_SetCurrentTimeMS();
+            break;
+    }
     if (enable_alarm) {
-        RTC_TimeTypeDef sTime1;
-        HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
-        if (sTime1.Hours == alarm_time.Hours &&
-            sTime1.Minutes == alarm_time.Minutes &&
-            sTime1.Seconds == alarm_time.Seconds) {
-            Alarm_InitMusic(MUSIC_ONLY_MY_RAILGUN);
+        if (sTime.Hours == alarm_time.Hours &&
+            sTime.Minutes == alarm_time.Minutes &&
+            sTime.Seconds == alarm_time.Seconds) {
             page = PAGE_ALARM;
             return;
         }
     }
     if (KEY_R) {
-        page = PAGE_MS;
+        if (screen < 1) {
+            screen++;
+        } else {
+            screen = 0;
+        }
         return;
     }
-    if (KEY_U || KEY_D) {
-        page = PAGE_MENU;
-        return;
-    }
-}
-
-static void App_MSPage() {
-    Display_Set_CurrentTime_MS();
     if (KEY_L) {
-        page = PAGE_HOME;
-        return;
+        if (screen > 0) {
+            screen--;
+        } else {
+            screen = 1;
+        }
     }
     if (KEY_U || KEY_D) {
         page = PAGE_MENU;
@@ -905,12 +964,18 @@ BOOL App_MenuOption(int cursor) {
         case 2:
             page = PAGE_MUSIC;
             break;
+        case 3:
+            page = PAGE_STOPWATCH;
+            break;
         case 4:
             enable_alarm = !enable_alarm;
             Alarm_Save();
             return FALSE;
         case 5:
             page = PAGE_SET_ALARM;
+            break;
+        case 6:
+            page = PAGE_COUNTDOWN;
             break;
         case 7:
             page = PAGE_HOME;
@@ -962,20 +1027,18 @@ static void App_MenuPage() {
 static void App_SetTimePage() {
     static int cursor = -1;
     static char buffer[4] = {0};
-    RTC_TimeTypeDef sTime1;
-    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
     if (cursor == -1) {
-        buffer[0] = sTime1.Hours / 16 + '0';
-        buffer[1] = sTime1.Hours % 16 + '0';
-        buffer[2] = sTime1.Minutes / 16 + '0';
-        buffer[3] = sTime1.Minutes % 16 + '0';
+        buffer[0] = sTime.Hours / 16 + '0';
+        buffer[1] = sTime.Hours % 16 + '0';
+        buffer[2] = sTime.Minutes / 16 + '0';
+        buffer[3] = sTime.Minutes % 16 + '0';
         cursor = 0;
 
         Keys_SetMode(KEY_ID_U, KEY_MODE_LONG);
         Keys_SetMode(KEY_ID_D, KEY_MODE_LONG);
     }
 
-    if (sTime1.Seconds & 1) {
+    if (sTime.Seconds & 1) {
         Display_SetChar(buffer, TRUE);
     } else {
         char buffer1[] = {0};
@@ -986,10 +1049,10 @@ static void App_SetTimePage() {
     if (KEY_R) {
         if (cursor >= 3) {
             cursor = -1;
-            sTime1.Hours = ((buffer[0] - '0') << 4) + (buffer[1] - '0');
-            sTime1.Minutes = ((buffer[2] - '0') << 4) + (buffer[3] - '0');
-            sTime1.Seconds = 0x00;
-            HAL_RTC_SetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
+            sTime.Hours = ((buffer[0] - '0') << 4) + (buffer[1] - '0');
+            sTime.Minutes = ((buffer[2] - '0') << 4) + (buffer[3] - '0');
+            sTime.Seconds = 0x00;
+            HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
 
             Keys_SetMode(KEY_ID_U, KEY_MODE_ONCE);
             Keys_SetMode(KEY_ID_D, KEY_MODE_ONCE);
@@ -1030,7 +1093,7 @@ static void App_SetTimePage() {
         }
         if (buffer[cursor] < upper) {
             buffer[cursor]++;
-            if (cursor == 0 && buffer[0] == 2 && buffer[1] > '3') {
+            if (cursor == 0 && buffer[0] == '2' && buffer[1] > '3') {
                 buffer[1] = '3';
             }
         }
@@ -1051,19 +1114,17 @@ static void App_AlarmPage() {
         Alarm_InitMusic(alarm_music);
     }
 
-    RTC_TimeTypeDef sTime1;
-    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
     if (alarm_music) {
         Alarm_TickMusic();
     }
 
-    if (sTime1.Seconds & 1) {
+    if (sTime.Seconds & 1) {
         Display_SetChar("8888", FALSE);
         if (alarm_music == 0) {
             Alarm_SetState(TRUE, 0xC00);
         }
     } else {
-        Display_Set_CurrentTime_HM();
+        Display_SetCurrentTimeHM();
         if (alarm_music == 0) {
             Alarm_SetState(FALSE, 0xC00);
         }
@@ -1103,8 +1164,6 @@ static void App_TempHumiPage() {
 static void App_SetAlarmPage() {
     static int cursor = -1;
     static char buffer[4] = {0};
-    RTC_TimeTypeDef sTime1;
-    HAL_RTC_GetTime(&hrtc, &sTime1, RTC_FORMAT_BCD);
     if (cursor == -1) {
         buffer[0] = alarm_time.Hours / 16 + '0';
         buffer[1] = alarm_time.Hours % 16 + '0';
@@ -1116,7 +1175,7 @@ static void App_SetAlarmPage() {
         Keys_SetMode(KEY_ID_D, KEY_MODE_LONG);
     }
 
-    if (sTime1.Seconds & 1) {
+    if (sTime.Seconds & 1) {
         Display_SetChar(buffer, TRUE);
     } else {
         char buffer1[] = {0};
@@ -1171,7 +1230,7 @@ static void App_SetAlarmPage() {
         }
         if (buffer[cursor] < upper) {
             buffer[cursor]++;
-            if (cursor == 0 && buffer[0] == 2 && buffer[1] > '3') {
+            if (cursor == 0 && buffer[0] == '2' && buffer[1] > '3') {
                 buffer[1] = '3';
             }
         }
@@ -1209,6 +1268,240 @@ static void App_MusicPage() {
     if (KEY_R) {
         Alarm_InitMusic(alarm_music);
         return;
+    }
+}
+
+static void App_StopwatchPage() {
+    static int start_timestamp = 0;
+    static int time_passed = 0;
+    static BOOL running = FALSE;
+    static int screen = SCREEN_MS;
+    int current_timestamp =
+        second_timestamp * 1000 + __HAL_TIM_GetCounter(&htim3);
+    if (running) {
+        int total = current_timestamp - start_timestamp + time_passed;
+        Display_SetTimestamp(total, screen);
+    } else {
+        Display_SetTimestamp(time_passed, screen);
+    }
+    switch (screen) {
+        case SCREEN_HM:
+            display_buffer[0] |= LED_DP_Pin;
+            break;
+        case SCREEN_MS:
+            display_buffer[2] |= LED_DP_Pin;
+            break;
+        case SCREEN_SM:
+            display_buffer[3] |= LED_DP_Pin;
+            break;
+    }
+    if (KEY_L) {
+        if (screen > 0) {
+            screen--;
+        }
+        return;
+    }
+    if (KEY_R) {
+        if (screen < 2) {
+            screen++;
+        }
+        return;
+    }
+    if (KEY_U) {
+        if (running) {
+            running = FALSE;
+            time_passed += current_timestamp - start_timestamp;
+        } else {
+            running = TRUE;
+            start_timestamp = current_timestamp;
+        }
+        return;
+    }
+    if (KEY_D) {
+        if (!running) {
+            if (time_passed == 0) {
+                page = PAGE_HOME;
+            } else {
+                time_passed = 0;
+            }
+        }
+    }
+}
+static void App_CountdownPage() {
+    static int stage = 0;
+    static int hours = 0;
+    static int minutes = 10;
+    static int seconds = 0;
+
+    static BOOL running = FALSE;
+    static int start_timestamp = 0;
+    static int remain_time = 0;
+    static int screen = SCREEN_MS;
+
+    if (stage <= 2) {
+        Keys_SetMode(KEY_ID_U, KEY_MODE_LONG_ACC);
+        Keys_SetMode(KEY_ID_D, KEY_MODE_LONG_ACC);
+    } else {
+        Keys_SetMode(KEY_ID_U, KEY_MODE_ONCE);
+        Keys_SetMode(KEY_ID_D, KEY_MODE_ONCE);
+    }
+    int current_timestamp =
+        second_timestamp * 1000 + __HAL_TIM_GetCounter(&htim3);
+    char buf[4] = {0};
+    switch (stage) {
+        case 0:
+            buf[0] = hours / 10 + '0';
+            buf[1] = hours % 10 + '0';
+            if (sTime.Seconds & 1) {
+                buf[2] = minutes / 10 + '0';
+                buf[3] = minutes % 10 + '0';
+            }
+            Display_SetChar(buf, TRUE);
+            display_buffer[0] |= LED_DP_Pin;
+            if (KEY_U) {
+                if (hours < 99) hours++;
+                return;
+            }
+            if (KEY_D) {
+                if (hours > 0) hours--;
+                return;
+            }
+            if (KEY_L) {
+                page = PAGE_HOME;
+                Keys_SetMode(KEY_ID_U, KEY_MODE_ONCE);
+                Keys_SetMode(KEY_ID_D, KEY_MODE_ONCE);
+                return;
+            }
+            if (KEY_R) {
+                stage = 1;
+                return;
+            }
+            break;
+        case 1:
+            if (sTime.Seconds & 1) {
+                buf[0] = hours / 10 + '0';
+                buf[1] = hours % 10 + '0';
+            }
+            buf[2] = minutes / 10 + '0';
+            buf[3] = minutes % 10 + '0';
+            Display_SetChar(buf, TRUE);
+            display_buffer[0] |= LED_DP_Pin;
+            if (KEY_U) {
+                if (minutes < 59)
+                    minutes++;
+                else
+                    minutes = 0;
+                return;
+            }
+            if (KEY_D) {
+                if (minutes > 0)
+                    minutes--;
+                else
+                    minutes = 59;
+                return;
+            }
+            if (KEY_L) {
+                stage = 0;
+                return;
+            }
+            if (KEY_R) {
+                stage = 2;
+                return;
+            }
+            break;
+        case 2:
+            if (sTime.Seconds & 1) {
+                buf[0] = minutes / 10 + '0';
+                buf[1] = minutes % 10 + '0';
+            }
+            buf[2] = seconds / 10 + '0';
+            buf[3] = seconds % 10 + '0';
+            Display_SetChar(buf, TRUE);
+            display_buffer[2] |= LED_DP_Pin;
+            if (KEY_U) {
+                if (seconds < 59)
+                    seconds++;
+                else
+                    seconds = 0;
+                return;
+            }
+            if (KEY_D) {
+                if (seconds > 0)
+                    seconds--;
+                else
+                    seconds = 59;
+                return;
+            }
+            if (KEY_L) {
+                stage = 0;
+                return;
+            }
+            if (KEY_R) {
+                remain_time =
+                    hours * 3600 * 1000 + minutes * 60 * 1000 + seconds * 1000;
+                if (remain_time > 0) {
+                    running = TRUE;
+                    start_timestamp = current_timestamp;
+                    Keys_SetMode(KEY_ID_U, KEY_MODE_ONCE);
+                    Keys_SetMode(KEY_ID_D, KEY_MODE_ONCE);
+                    stage = 3;
+                }
+                return;
+            }
+            break;
+        case 3:
+            if (running) {
+                if (current_timestamp >= start_timestamp + remain_time) {
+                    stage = 0;
+                    page = PAGE_ALARM;
+                    return;
+                } else {
+                    Display_SetTimestamp(
+                        start_timestamp + remain_time - current_timestamp,
+                        screen);
+                }
+            } else {
+                Display_SetTimestamp(remain_time, screen);
+            }
+            switch (screen) {
+                case SCREEN_HM:
+                    display_buffer[0] |= LED_DP_Pin;
+                    break;
+                case SCREEN_MS:
+                    display_buffer[2] |= LED_DP_Pin;
+                    break;
+                case SCREEN_SM:
+                    display_buffer[3] |= LED_DP_Pin;
+                    break;
+            }
+            if (KEY_L) {
+                if (screen > 0) {
+                    screen--;
+                }
+                return;
+            }
+            if (KEY_R) {
+                if (screen < 2) {
+                    screen++;
+                }
+                return;
+            }
+            if (KEY_U) {
+                if (running) {
+                    running = FALSE;
+                    remain_time -= current_timestamp - start_timestamp;
+                } else {
+                    running = TRUE;
+                    start_timestamp = current_timestamp;
+                }
+                return;
+            }
+            if (KEY_D) {
+                if (!running) {
+                    stage = 0;
+                    page = PAGE_HOME;
+                }
+            }
     }
 }
 /* USER CODE END 4 */
