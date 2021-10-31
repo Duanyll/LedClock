@@ -22,6 +22,7 @@
 
 #include "adc.h"
 #include "gpio.h"
+#include "iwdg.h"
 #include "rtc.h"
 #include "tim.h"
 #include "usart.h"
@@ -195,15 +196,15 @@ int main(void) {
     MX_TIM2_Init();
     MX_USART2_UART_Init();
     MX_TIM3_Init();
+    MX_IWDG_Init();
     /* USER CODE BEGIN 2 */
-    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
-    HAL_RTCEx_SetSecond_IT(&hrtc);
     HAL_TIM_Base_Start(&htim3);
     UART_Init();
     HAL_ADCEx_Calibration_Start(&hadc1);
     DHT11_Start();
-    HAL_Delay(1000);
     Alarm_Load();
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
+    HAL_RTCEx_SetSecond_IT(&hrtc);
     UART_Write_Text("---LedClock---");
     UART_Flush();
 
@@ -227,6 +228,7 @@ int main(void) {
         App_Tick();
         LED_Flush();
         UART_Flush();
+        HAL_IWDG_Refresh(&hiwdg);
     }
     /* USER CODE END 3 */
 }
@@ -243,10 +245,12 @@ void SystemClock_Config(void) {
     /** Initializes the RCC Oscillators according to the specified parameters
      * in the RCC_OscInitTypeDef structure.
      */
-    RCC_OscInitStruct.OscillatorType =
-        RCC_OSCILLATORTYPE_HSE | RCC_OSCILLATORTYPE_LSE;
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI |
+                                       RCC_OSCILLATORTYPE_HSE |
+                                       RCC_OSCILLATORTYPE_LSE;
     RCC_OscInitStruct.HSEState = RCC_HSE_ON;
     RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+    RCC_OscInitStruct.LSIState = RCC_LSI_ON;
     RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
         Error_Handler();
@@ -281,6 +285,10 @@ void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc) {
     HAL_RTC_GetTime(hrtc, &sTime, RTC_FORMAT_BCD);
     __HAL_TIM_SetCounter(&htim3, 0);
     second_timestamp++;
+    if (second_timestamp > 100000 && page != PAGE_STOPWATCH &&
+        page != PAGE_COUNTDOWN) {
+        second_timestamp = 0;
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -404,11 +412,9 @@ static void Display_SetTimestamp(int timestamp, int screen) {
     }
 }
 
-/* --------------------------------------------------------------------------
- */
-/*                                  KEY INPUT */
-/* --------------------------------------------------------------------------
- */
+/* -------------------------------------------------------------------------- */
+/*                                  KEY INPUT                                 */
+/* -------------------------------------------------------------------------- */
 
 uint8_t key_config[4];
 static void Keys_Tick() {
@@ -461,12 +467,14 @@ struct {
     char *tx_cur;
     char tx[256];
     char *rx_cur;
+    char *rx_end;
     char rx[32];
 } uart_buf;
 
 void UART_Init() {
     uart_buf.tx_cur = uart_buf.tx;
     uart_buf.rx_cur = uart_buf.rx;
+    uart_buf.rx_end = uart_buf.rx + 32;
     HAL_UART_Receive_IT(&huart2, uart_buf.rx_cur, 1);
 }
 
@@ -491,6 +499,35 @@ void UART_Write_Int(int x) {
     *uart_buf.tx_cur = x % 10 + '0';
     uart_buf.tx_cur++;
 }
+
+void UART_Write_Time(RTC_TimeTypeDef *time) {
+    UART_Write_Int(time->Hours >> 4);
+    UART_Write_Int(time->Hours % 16);
+    UART_Write_Text(":");
+    UART_Write_Int(time->Minutes >> 4);
+    UART_Write_Int(time->Minutes % 16);
+    UART_Write_Text(":");
+    UART_Write_Int(time->Seconds >> 4);
+    UART_Write_Int(time->Seconds % 16);
+}
+
+BOOL UART_Parse_Time(int x, RTC_TimeTypeDef *time) {
+    int digits[6] = {0};
+    for (int i = 0; i < 6; i++) {
+        digits[i] = x % 10;
+        x /= 10;
+    }
+    if (digits[5] * 10 + digits[4] < 24 && digits[3] * 10 + digits[2] < 60 &&
+        digits[1] * 10 + digits[0] < 60) {
+        time->Seconds = (digits[1] << 4) + digits[0];
+        time->Minutes = (digits[3] << 4) + digits[2];
+        time->Hours = (digits[5] << 4) + digits[4];
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
 void UART_Flush() {
     if (uart_buf.tx_cur > uart_buf.tx) {
         HAL_UART_Transmit_IT(&huart2, uart_buf.tx,
@@ -505,6 +542,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
         uart_buf.rx_cur = uart_buf.rx;
     } else {
         uart_buf.rx_cur++;
+        if (uart_buf.rx_cur >= uart_buf.rx_end) {
+            UART_Write_Text("Uart RX buffer overflow!");
+            UART_Flush();
+            uart_buf.rx_cur = uart_buf.rx;
+        }
     }
     HAL_UART_Receive_IT(&huart2, uart_buf.rx_cur, 1);
 }
@@ -514,41 +556,45 @@ void UART_OnData() {
     char *cur = uart_buf.rx;
     char command = *cur;
     cur++;
-    while (*cur < '0' || *cur > '9') cur++;
     while (*cur >= '0' && *cur <= '9') {
         x *= 10;
         x += *cur - '0';
         cur++;
     }
-    int digits[6];
     switch (command) {
         case 'T':
-            for (int i = 0; i < 6; i++) {
-                digits[i] = x % 10;
-                x /= 10;
-            }
-            if (digits[5] * 10 + digits[4] < 24 &&
-                digits[3] * 10 + digits[2] < 60 &&
-                digits[1] * 10 + digits[0] < 60) {
-                sTime.Seconds = (digits[1] << 4) + digits[0];
-                sTime.Minutes = (digits[3] << 4) + digits[2];
-                sTime.Hours = (digits[5] << 4) + digits[4];
+            if (UART_Parse_Time(x, &sTime)) {
                 HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD);
-                UART_Write_Text("Time set.");
+                UART_Write_Text("Time set to ");
+                UART_Write_Time(&sTime);
+            } else {
+                UART_Write_Text("Illegal time.");
+            }
+            break;
+        case 'A':
+            if (UART_Parse_Time(x, &alarm_time)) {
+                Alarm_Save();
+                UART_Write_Text("Alarm set to ");
+                UART_Write_Time(&alarm_time);
             } else {
                 UART_Write_Text("Illegal time.");
             }
             break;
         case 'I':
             UART_Write_Text("Current time: ");
-            UART_Write_Int(sTime.Hours >> 4);
-            UART_Write_Int(sTime.Hours % 16);
-            UART_Write_Text(":");
-            UART_Write_Int(sTime.Minutes >> 4);
-            UART_Write_Int(sTime.Minutes % 16);
-            UART_Write_Text(":");
-            UART_Write_Int(sTime.Seconds >> 4);
-            UART_Write_Int(sTime.Seconds % 16);
+            UART_Write_Time(&sTime);
+            UART_Write_NewLine();
+            UART_Write_Text("Alarm time: ");
+            UART_Write_Time(&alarm_time);
+            UART_Write_NewLine();
+            UART_Write_Text("Alarm enabled: ");
+            if (enable_alarm) {
+                UART_Write_Text("true");
+            } else {
+                UART_Write_Text("false");
+            }
+            UART_Write_NewLine("Current light: ");
+            UART_Write_Int(current_light);
             break;
         case 'H':
             DHT11_Run();
@@ -962,7 +1008,7 @@ BOOL App_MenuOption(int cursor) {
             page = PAGE_TEMP_HUMI;
             break;
         case 2:
-            page = PAGE_MUSIC;
+            page = PAGE_COUNTDOWN;
             break;
         case 3:
             page = PAGE_STOPWATCH;
@@ -975,7 +1021,7 @@ BOOL App_MenuOption(int cursor) {
             page = PAGE_SET_ALARM;
             break;
         case 6:
-            page = PAGE_COUNTDOWN;
+            page = PAGE_MUSIC;
             break;
         case 7:
             page = PAGE_HOME;
