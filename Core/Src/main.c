@@ -93,6 +93,7 @@ typedef unsigned char BOOL;
 /* USER CODE BEGIN PV */
 uint16_t display_buffer[4];
 int brightness, current_light;
+BOOL uart_key_req[4];
 BOOL key_state[4];
 
 int second_timestamp = 0;
@@ -421,6 +422,11 @@ static void Keys_Tick() {
     static int hits[4] = {0};
     static uint16_t keys[] = {BTN_L_Pin, BTN_R_Pin, BTN_U_Pin, BTN_D_Pin};
     for (int i = 0; i < 4; i++) {
+        if (uart_key_req[i]) {
+            key_state[i] = TRUE;
+            uart_key_req[i] = FALSE;
+            continue;
+        }
         GPIO_PinState state = HAL_GPIO_ReadPin(GPIOB, keys[i]);
         if (state) {
             hits[i] = 0;
@@ -598,6 +604,14 @@ void UART_OnData() {
             break;
         case 'H':
             DHT11_Run();
+            break;
+        case 'K':
+            if (x >= 0 && x < 4) {
+                uart_key_req[x] = TRUE;
+                UART_Write_Text("Key pressed.");
+            } else {
+                UART_Write_Text("Unknown key.");
+            }
             break;
         default:
             UART_Write_Text("Unknown command.");
