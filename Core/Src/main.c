@@ -190,6 +190,8 @@ int main(void) {
     /* USER CODE END SysInit */
 
     /* Initialize all configured peripherals */
+
+    // Add comment
     MX_GPIO_Init();
     MX_ADC1_Init();
     MX_RTC_Init();
